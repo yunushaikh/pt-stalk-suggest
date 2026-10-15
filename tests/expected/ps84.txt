@@ -1,0 +1,65 @@
+Summary
+----------------------------------------------------------------------------------------------------
+  Parameter                           Current        Suggested       Status  Conf. 
+  innodb_redo_log_capacity            100M           1G              CHANGE  Medium
+  table_open_cache                    4000           8000            CHANGE  Low   
+  open_files_limit                    8210           17000           CHANGE  Low   
+  binlog_cache_size                   32K            128K            CHANGE  Low   
+  innodb_io_capacity / _max           10000 / 20000  fix redo first  REVIEW  Low   
+  sort_buffer_size                    256K           512K            REVIEW  Low   
+  innodb_buffer_pool_size             256M           keep            OK      High  
+  max_connections                     200            keep            OK      High  
+  innodb_log_buffer_size              64M            keep            OK      High  
+  innodb_lru_scan_depth               1024           keep            OK      High  
+  innodb_thread_concurrency           0              keep            OK      Medium
+  durability (flush_log/sync_binlog)  1 / 1          keep            OK      High  
+  thread_cache_size                   10             keep            OK      High  
+  table_definition_cache              2000           keep            OK      High  
+  innodb_open_files                   4000           keep            OK      High  
+  max_prepared_stmt_count             16382          keep            OK      High  
+  tmp_table_size                      16M            keep            OK      High  
+  key_buffer_size                     8M             keep            OK      High  
+
+Details (evidence and formulas)
+  [CHANGE] innodb_redo_log_capacity   100M -> 1G   (confidence: Medium)
+  [CHANGE] table_open_cache   4000 -> 8000   (confidence: Low)
+  [CHANGE] open_files_limit   8210 -> 17000   (confidence: Low)
+  [CHANGE] binlog_cache_size   32K -> 128K   (confidence: Low)
+  [REVIEW] innodb_io_capacity / _max   10000 / 20000 -> fix redo first   (confidence: Low)
+  [REVIEW] sort_buffer_size   256K -> 512K   (confidence: Low)
+  [OK] innodb_buffer_pool_size   256M -> keep   (confidence: High)
+  [OK] max_connections   200 -> keep   (confidence: High)
+  [OK] innodb_log_buffer_size   64M -> keep   (confidence: High)
+  [OK] innodb_lru_scan_depth   1024 -> keep   (confidence: High)
+  [OK] innodb_thread_concurrency   0 -> keep   (confidence: Medium)
+  [OK] durability (flush_log/sync_binlog)   1 / 1 -> keep   (confidence: High)
+  [OK] thread_cache_size   10 -> keep   (confidence: High)
+  [OK] table_definition_cache   2000 -> keep   (confidence: High)
+  [OK] innodb_open_files   4000 -> keep   (confidence: High)
+  [OK] max_prepared_stmt_count   16382 -> keep   (confidence: High)
+  [OK] tmp_table_size   16M -> keep   (confidence: High)
+  [OK] key_buffer_size   8M -> keep   (confidence: High)
+Other findings (not fixed by configuration)
+----------------------------------------------------------------------------------------------------
+  * Joins without a usable index: Select_full_join 4/s. Find them in the slow log / 
+    performance_schema digests (SUM_SELECT_FULL_JOIN).
+  * Full table scans: Handler_read_rnd_next 1.1M rows/s, Select_scan 2041/s. Indexing these queries 
+    reduces buffer pool churn and CPU.
+
+Caveats
+----------------------------------------------------------------------------------------------------
+  * MySQL has been up only 4m 6s: counters since start do not represent normal load yet, and the 
+    buffer pool may still be warming up.
+  * Only 19 seconds of samples: rates in the window are noisy.
+  * ps shows 3 mysqld processes on this host: the memory budget assumes the largest one and counts 
+    the others as other processes.
+  * Could not match datadir to an iostat device; disk numbers use the busiest device (dm-0).
+  * RAM comes from /proc/meminfo, which shows the host's memory even when mysqld runs in a 
+    container or pod with a lower memory limit; pt-stalk does not record cgroup limits, so memory 
+    suggestions assume the whole host is available.
+  * pt-stalk captures a short window, often during an incident. Window rates show that moment; 
+    settings should fit normal load with headroom for it, so compare with the 'since start' figures 
+    before changing anything.
+  * Uptime under one hour: confidence of every suggestion was lowered one step because warm-up 
+    inflates the counters.
+  * Not applicable here: query_cache (removed in 8.0)

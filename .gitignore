@@ -1,0 +1,4 @@
+# local work dirs
+work/
+*.mext
+dist/

@@ -1,0 +1,20 @@
+# Deliberately poor settings so the rules have something to report
+[mysqld]
+innodb_buffer_pool_size = 64M
+innodb_log_file_size    = 8M
+innodb_log_files_in_group = 2
+innodb_log_buffer_size  = 1M
+query_cache_type        = 1
+query_cache_size        = 64M
+table_open_cache        = 64
+table_definition_cache  = 400
+thread_cache_size       = 0
+sort_buffer_size        = 32K
+tmp_table_size          = 1M
+max_heap_table_size     = 1M
+binlog_cache_size       = 4K
+log_bin                 = mysql-bin
+server_id               = 57
+innodb_io_capacity      = 100
+innodb_io_capacity_max  = 200
+max_connections         = 200

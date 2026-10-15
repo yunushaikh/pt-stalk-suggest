@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0) — use when a tag push run failed or was queued too long"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Resolve ref and version
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            REF="${{ inputs.tag }}"
+          else
+            REF="${GITHUB_REF_NAME}"
+          fi
+          if [[ ! "$REF" =~ ^v ]]; then
+            echo "Tag must start with v (got: $REF)" >&2
+            exit 1
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "tag=${REF#v}" >> "$GITHUB_OUTPUT"
+          echo "Release ref: $REF (version ${REF#v})"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.meta.outputs.ref }}
+
+      - name: Run tests
+        run: tests/run-tests.sh
+
+      - name: Build single-file release
+        env:
+          VERSION: ${{ steps.meta.outputs.tag }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tools/build.sh dist/pt-stalk-suggest
+          dist/pt-stalk-suggest --version
+          cd dist
+          sha256sum pt-stalk-suggest > SHA256SUMS
+          ls -la
+
+      - name: Extract CHANGELOG section
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          awk -v ver="$TAG" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [[ ! -s release-notes.md ]]; then
+            echo "Release notes for ${TAG} not found in CHANGELOG.md" >&2
+            exit 1
+          fi
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "## Download (this release)"
+            echo ""
+            echo "| Asset | Runs on |"
+            echo "|-------|---------|"
+            echo "| \`pt-stalk-suggest\` | any Linux host with bash 4.2+ and awk (one file, no install) |"
+            echo ""
+            echo "Verify with \`SHA256SUMS\`. See [docs/INSTALL.md](https://github.com/${{ github.repository }}/blob/main/docs/INSTALL.md) for install and [docs/USAGE.md](https://github.com/${{ github.repository }}/blob/main/docs/USAGE.md) for usage."
+          } >> release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.ref }}
+          body_path: release-notes.md
+          files: |
+            dist/pt-stalk-suggest
+            dist/SHA256SUMS
+          generate_release_notes: false

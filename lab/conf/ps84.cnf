@@ -1,0 +1,4 @@
+# Mostly defaults: the control case
+[mysqld]
+innodb_buffer_pool_size = 256M
+max_connections         = 200

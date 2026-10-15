@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# pt-stalk-suggest - suggest MySQL configuration changes from raw pt-stalk data.
+#
+# Reads every capture (*-mysqladmin and the files beside it) in a pt-stalk
+# directory, turns the status samples into per-second rates (as pt-mext -r
+# does), measures the host (RAM, CPU,
+# disk, swap) and prints, for each parameter: current value, suggested value,
+# the evidence, the formula used and a confidence level.
+
+set -uo pipefail
+export LC_ALL=C
+
+VERSION=0.1.0
+BUILD_COMMIT=""   # set by tools/build.sh in release builds
+# >>> libraries: tools/build.sh replaces this block with the files themselves
+SELF_DIR=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+
+# shellcheck source=lib/common.sh
+source "$SELF_DIR/lib/common.sh"
+# shellcheck source=lib/collect.sh
+source "$SELF_DIR/lib/collect.sh"
+# shellcheck source=lib/report.sh
+source "$SELF_DIR/lib/report.sh"
+# shellcheck source=lib/defaults.sh
+source "$SELF_DIR/lib/defaults.sh"
+for f in "$SELF_DIR"/lib/rules/*.sh; do
+    # shellcheck source=/dev/null
+    source "$f"
+done
+# <<< libraries
+
+usage() {
+    cat <<EOF
+Usage: ${0##*/} [options] PT_STALK_DIR
+
+Suggest MySQL configuration changes from a raw pt-stalk directory.
+All captures found under PT_STALK_DIR are combined (only those after the
+latest MySQL restart, since counters reset on restart).
+
+Options:
+  -p, --prefix TS        use only the capture with this prefix (e.g. 2026_10_13_12_39_26)
+  -a, --all              also show the evidence for parameters that are OK
+  -r, --os-reserve SIZE  memory to keep for the OS (default 10% of RAM, 1G..8G), e.g. 4G
+      --color WHEN       auto (default), always, never
+      --keep-work DIR    keep intermediate files in DIR, including a pt-mext -r style
+                         table per capture (<prefix>.mext)
+  -v, --verbose          progress messages on stderr
+  -V, --version          print the version
+  -h, --help             this help
+
+Requires: bash 4+, awk, coreutils. No MySQL connection is made.
+EOF
+}
+
+OPT_PREFIX="" SHOW_OK=0 OPT_OS_RESERVE="" USE_COLOR=auto KEEP_WORK="" VERBOSE=0 DIR=""
+while (($#)); do
+    case $1 in
+        -p|--prefix) OPT_PREFIX=${2:?}; shift ;;
+        -a|--all) SHOW_OK=1 ;;
+        -r|--os-reserve) OPT_OS_RESERVE=${2:?}; shift ;;
+        --color) USE_COLOR=${2:?}; shift ;;
+        --keep-work) KEEP_WORK=${2:?}; shift ;;
+        -v|--verbose) VERBOSE=1 ;;
+        -V|--version) echo "pt-stalk-suggest $VERSION${BUILD_COMMIT:+ ($BUILD_COMMIT)}"; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
+        -*) usage >&2; die "unknown option: $1" ;;
+        *) [[ -z $DIR ]] || die "only one directory can be given"; DIR=$1 ;;
+    esac
+    shift
+done
+[[ -n $DIR ]] || { usage >&2; exit 2; }
+[[ -d $DIR ]] || die "not a directory: $DIR"
+((BASH_VERSINFO[0] >= 4)) || die "bash 4 or newer is required"
+
+if [[ -n $KEEP_WORK ]]; then
+    mkdir -p "$KEEP_WORK" || die "cannot create $KEEP_WORK"; WORK=$KEEP_WORK
+else
+    WORK=$(mktemp -d "${TMPDIR:-/tmp}/pt-stalk-suggest.XXXXXX") || die "mktemp failed"
+    trap 'rm -rf "$WORK"' EXIT
+fi
+
+collect_all "$DIR" "$OPT_PREFIX" "$WORK"
+compute_memory_budget
+
+# Rules, grouped as in docs/FORMULAS.md
+rule_buffer_pool
+rule_max_connections
+rule_redo_log
+rule_log_buffer
+rule_io_capacity
+rule_lru_scan_depth
+rule_thread_concurrency
+rule_durability
+rule_thread_cache
+rule_table_open_cache
+rule_table_definition_cache
+rule_open_files
+rule_prepared_stmt
+rule_tmp_tables
+rule_sort_buffer
+rule_binlog_cache
+rule_key_buffer
+rule_query_cache
+rule_findings
+data_caveats
+apply_uptime_penalty
+
+# ---------------------------------------------------------------------------
+setup_colors
+printf '%s' "$C_B"; rule_line '='; printf '  pt-stalk tuning suggestions  (pt-stalk-suggest %s)\n' "$VERSION"; rule_line '='; printf '%s' "$C_0"
+
+section "Source"
+kv "Directory" "$DIR"
+names=(); for p in "${CAPTURES[@]}"; do names+=("${p##*/}"); done
+kv "Captures used" "${#CAPTURES[@]}: ${names[*]}"
+kv "Samples" "$(h samples) per-second samples, $(h window_secs) s of window"
+
+section "Server"
+kv "Version" "$MYSQL_FLAVOR ${VARS[version]:-unknown}  (rules for $MYSQL_SERIES)"
+kv "Host" "${HOST[hostname]:-unknown}"
+kv "Uptime" "$(human_secs "$(h uptime)")"
+cpus=$(h cpus); [[ ${cpus:-0} == 0 ]] && cpus=unknown
+kv "CPUs" "$cpus  (busy avg ${HOST[cpu_busy_avg]:-n/a}%, max ${HOST[cpu_busy_max]:-n/a}%; iowait avg ${HOST[cpu_iowait_avg]:-n/a}%)"
+if ((MEM_KNOWN)); then
+    kv "RAM" "$(human_bytes "$(h mem_total)")  (MemAvailable min $(human_bytes "$(h mem_avail_min)"))"
+    kv "Swap" "$(human_bytes "$(h swap_total)") total, $(human_bytes "$(h swap_used_max)") used; swap-in avg ${HOST[swap_in_avg]:-n/a} KiB/s; vm.swappiness ${HOST[swappiness]:-n/a}"
+else
+    kv "RAM" "unknown (no meminfo)"
+fi
+kv "Data disk" "${HOST[disk]:-n/a} (${HOST[data_mount]:-?})  w/s avg ${HOST[disk_w_avg]:-n/a}, %util avg ${HOST[disk_util_avg]:-n/a} max ${HOST[disk_util_max]:-n/a}"
+kv "Threads_running" "avg $(human_num "$(s Threads_running avg)"), max $(s Threads_running max)"
+
+render_memory_budget
+render_summary
+render_details "$SHOW_OK"
+render_findings
+render_caveats
+echo

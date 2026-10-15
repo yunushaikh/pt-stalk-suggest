@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        awk: [gawk, mawk]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use ${{ matrix.awk }} as awk
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ${{ matrix.awk }} >/dev/null
+          mkdir -p "$RUNNER_TEMP/bin"
+          ln -sf "$(command -v ${{ matrix.awk }})" "$RUNNER_TEMP/bin/awk"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Run tests
+        run: |
+          awk -W version 2>/dev/null | head -1 || awk --version | head -1
+          tests/run-tests.sh
