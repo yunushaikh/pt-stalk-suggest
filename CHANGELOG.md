@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Example report in the README**, with the full sample in [docs/example-output.txt](docs/example-output.txt). A test keeps the sample identical to real output.
+
+### Fixed
+
+- **Redo capacity evidence:** short times now show in seconds ("holds 1.7 s of writes", not "0 minutes"), and the duplicated size in brackets is gone.
+- **innodb_max_dirty_pages_pct** is shown as `90`, not `90.000000`.
+
 ## [0.1.0] - 2026-10-15
 
 First public preview.

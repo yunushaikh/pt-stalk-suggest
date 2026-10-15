@@ -87,6 +87,15 @@ human_secs() {
     }'
 }
 
+# human_dur 102.5 -> "1.7 min" ; 1.7 -> "1.7 s" ; 9000 -> "2.5 h"
+human_dur() {
+    awk -v s="$(num "$1")" 'BEGIN {
+        if (s < 120)       printf "%.1f s\n", s
+        else if (s < 7200) printf "%.0f min\n", s / 60
+        else               printf "%.1f h\n", s / 3600
+    }'
+}
+
 # to_bytes "64M" -> 67108864 (accepts plain numbers too)
 to_bytes() {
     awk -v v="$1" 'BEGIN {

@@ -1,0 +1,152 @@
+====================================================================================================
+  pt-stalk tuning suggestions  (pt-stalk-suggest 0.1.0)
+====================================================================================================
+
+Source
+----------------------------------------------------------------------------------------------------
+  Directory          /var/lib/pt-stalk
+  Captures used      1: 2026_10_15_09_48_15
+  Samples            20 per-second samples, 19 s of window
+
+Server
+----------------------------------------------------------------------------------------------------
+  Version            Percona Server 8.4.11-11  (rules for 8.4)
+  Host               lab-host
+  Uptime             4m 6s
+  CPUs               22  (busy avg 90.3%, max 94.5%; iowait avg 4.7%)
+  RAM                91.5G  (MemAvailable min 74.5G)
+  Swap               8G total, 0B used; swap-in avg 0.0 KiB/s; vm.swappiness 60
+  Data disk          dm-0 (/)  w/s avg 15028.7, %util avg 88.7 max 92.0
+  Threads_running    avg 8.85, max 11
+
+Memory budget
+----------------------------------------------------------------------------------------------------
+  RAM                91.5G
+  OS reserve         8G  (10% of RAM, 1G..8G; override with --os-reserve)
+  Other processes    21.8G  (sum of non-mysqld RSS in ps)
+  Budget for mysqld  61.7G  = RAM - reserve - other processes
+
+  Global buffers     328M  (buffer pool + log buffer + key buffer + query cache)
+  TempTable max      2.7G  (temptable_max_ram, on demand)
+  Per connection     1.9M  (sort+join+read+read_rnd+thread_stack+net buffers+binlog cache)
+  Expected use       360.9M  = global + per-connection x Max_used_connections (17)
+  Worst case         3.4G  = global + TempTable + per-connection x max_connections (200)
+  mysqld RSS now     797.7M  (0.9% of RAM)
+  Verdict            fits, including the worst case
+
+Summary
+----------------------------------------------------------------------------------------------------
+  Parameter                           Current        Suggested       Status  Conf.
+  innodb_redo_log_capacity            100M           1G              CHANGE  Medium
+  table_open_cache                    4000           8000            CHANGE  Low
+  open_files_limit                    8210           17000           CHANGE  Low
+  binlog_cache_size                   32K            128K            CHANGE  Low
+  innodb_io_capacity / _max           10000 / 20000  fix redo first  REVIEW  Low
+  sort_buffer_size                    256K           512K            REVIEW  Low
+  innodb_buffer_pool_size             256M           keep            OK      High
+  max_connections                     200            keep            OK      High
+  innodb_log_buffer_size              64M            keep            OK      High
+  innodb_lru_scan_depth               1024           keep            OK      High
+  innodb_thread_concurrency           0              keep            OK      Medium
+  durability (flush_log/sync_binlog)  1 / 1          keep            OK      High
+  thread_cache_size                   10             keep            OK      High
+  table_definition_cache              2000           keep            OK      High
+  innodb_open_files                   4000           keep            OK      High
+  max_prepared_stmt_count             16382          keep            OK      High
+  tmp_table_size                      16M            keep            OK      High
+  key_buffer_size                     8M             keep            OK      High
+
+Details (evidence and formulas)
+----------------------------------------------------------------------------------------------------
+
+  [CHANGE] innodb_redo_log_capacity   100M -> 1G   (confidence: Medium)
+    Evidence   Redo written: 58M/s in window (peak 74.5M/s), 6.9M/s since start
+               Capacity 100M (innodb_redo_log_capacity, default for 8.4: 100M) holds 1.7 s of
+               writes at 58M/s
+               Checkpoint age: max 83M of 83.3M = 99.6%; modified age 71.6% (Innodb_checkpoint_age,
+               max of every sample)
+               Flushing thresholds: aggressive from ~87.0%, sync flush (writes stall) from ~93.0%
+               of max checkpoint age
+    Formula    target = one hour of writes, at most max(buffer pool size, 2 x current) and 512G:
+               checkpoint age reached the aggressive-flushing zone
+    Why        InnoDB reached 99.6% of the max checkpoint age: it flushes pages furiously (and
+               stalls writes above ~93%) to free redo space. Dynamic since 8.0.30: SET PERSIST
+               innodb_redo_log_capacity = 1073741824;
+
+  [CHANGE] table_open_cache   4000 -> 8000   (confidence: Low)
+    Evidence   Opened_tables: 465/s in window (peak 774/s), 55.37/s since start
+               Open_tables: max 911 of table_open_cache 4000 (default for 8.4: 4000) (22.8%);
+               instances 16
+               Cache miss rate in window: 7.4%; overflows 452/s
+               Per instance: 4000 / 16 = 250 tables; a session always uses instance thread_id % 16,
+               and most reopens are overflows of one instance
+    Formula    new = 2 x current (rounded to 500), repeat until Opened_tables/s is near 0; requires
+               open_files_limit >= 10 + max_connections + 2 x table_open_cache = 16210
+    Why        Tables are evicted from a full instance while the cache as a whole is not full:
+               sessions touch more tables than one instance holds. Raise table_open_cache (dynamic)
+               so table_open_cache / instances covers the tables a busy session uses, or lower
+               table_open_cache_instances (needs a restart).
+
+  [CHANGE] open_files_limit   8210 -> 17000   (confidence: Low)
+    Evidence   Open_files: max 10 of open_files_limit 8210 (0.1%)
+               Needed for max_connections 200 and table_open_cache 8000: 10 + 200 + 2 x 8000 = 16210
+    Formula    new = max(10 + max_connections + 2 x table_open_cache, 1.5 x Open_files), rounded to
+               1000
+    Why        Too low for the table cache (or close to exhausted). Not dynamic: set LimitNOFILE in
+               the systemd unit (or ulimit -n) and open_files_limit, then restart.
+
+  [CHANGE] binlog_cache_size   32K -> 128K   (confidence: Low)
+    Evidence   Binlog_cache_disk_use / Binlog_cache_use: 100.0% in window (4.95 trx/s), 18.7% since
+               start
+               Statement cache spills: 0.0% since start
+    Formula    new = 4 x current (power of 2), at most 4M
+    Why        More than 10% of transactions spill their binlog events to a temporary file. The
+               cache is allocated per connection only when it writes, so a few MB is affordable.
+               Dynamic.
+
+  [REVIEW] innodb_io_capacity / _max   10000 / 20000 -> fix redo first   (confidence: Low)
+    Evidence   Pages flushed: 3414/s in window (peak 4374/s) vs io_capacity 10000 / io_capacity_max
+               20000 (defaults for 8.4: 10000 / 20000)
+               Dirty pages: max 19.68% of the pool (innodb_max_dirty_pages_pct = 90)
+               Redo pressure: 99.6% of max checkpoint age (aggressive flushing from ~87.0%)
+               Disk dm-0 (busiest): w/s avg 15028.7 max 18617.0; r/s avg 42.6; %util avg 88.7 max
+               92.0; w_await avg 0.75 ms
+    Formula    re-evaluate after the redo log change
+    Why        The flushing pressure comes from a redo log that is too small. Sync flushing is not
+               limited by io_capacity_max (buf0flu.cc: it flushes up to 2 x io_capacity_max per
+               pass without sleeping), so raising io_capacity does not help here. Resize the redo
+               log, take a new capture, then revisit io_capacity.
+
+  [REVIEW] sort_buffer_size   256K -> 512K   (confidence: Low)
+    Evidence   Sort_merge_passes 35.21/s vs sorts 9.37/s in window; 3.31/s since start
+    Formula    new = 2 x current, at most 2M globally
+    Why        Sorts do not fit in the buffer and merge through temporary files. Prefer SET SESSION
+               sort_buffer_size for the reporting queries that need it, or an index that avoids the
+               sort.
+
+  (OK parameters hidden; use --all to show their evidence)
+
+Other findings (not fixed by configuration)
+----------------------------------------------------------------------------------------------------
+  * Joins without a usable index: Select_full_join 4/s. Find them in the slow log /
+    performance_schema digests (SUM_SELECT_FULL_JOIN).
+  * Full table scans: Handler_read_rnd_next 1.1M rows/s, Select_scan 2041/s. Indexing these queries
+    reduces buffer pool churn and CPU.
+
+Caveats
+----------------------------------------------------------------------------------------------------
+  * MySQL has been up only 4m 6s: counters since start do not represent normal load yet, and the
+    buffer pool may still be warming up.
+  * Only 19 seconds of samples: rates in the window are noisy.
+  * ps shows 3 mysqld processes on this host: the memory budget assumes the largest one and counts
+    the others as other processes.
+  * Could not match datadir to an iostat device; disk numbers use the busiest device (dm-0).
+  * RAM comes from /proc/meminfo, which shows the host's memory even when mysqld runs in a
+    container or pod with a lower memory limit; pt-stalk does not record cgroup limits, so memory
+    suggestions assume the whole host is available.
+  * pt-stalk captures a short window, often during an incident. Window rates show that moment;
+    settings should fit normal load with headroom for it, so compare with the 'since start' figures
+    before changing anything.
+  * Uptime under one hour: confidence of every suggestion was lowered one step because warm-up
+    inflates the counters.
+  * Not applicable here: query_cache (removed in 8.0)

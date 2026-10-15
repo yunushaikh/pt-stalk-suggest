@@ -7,11 +7,13 @@ redo_capacity() {
     if ver_ge 8.0.30 && has_var innodb_redo_log_capacity; then
         REDO_PARAM=innodb_redo_log_capacity
         REDO_CAP=$(vnum innodb_redo_log_capacity)
-        REDO_DESC="innodb_redo_log_capacity $(human_bytes "$REDO_CAP")$(dflt_note innodb_redo_log_capacity)"
+        REDO_DESC="innodb_redo_log_capacity"
+        [[ -n $(dflt innodb_redo_log_capacity) ]] && REDO_DESC+=", default for $MYSQL_SERIES: $(dflt innodb_redo_log_capacity)"
     else
         REDO_PARAM="innodb_log_file_size (x files)"
         REDO_CAP=$(calc_int "$(vnum innodb_log_file_size) * $(max2 "$(vnum innodb_log_files_in_group)" 1)")
-        REDO_DESC="innodb_log_file_size $(human_bytes "$(vnum innodb_log_file_size)") x $(vnum innodb_log_files_in_group) files$(dflt_note innodb_log_file_size)"
+        REDO_DESC="innodb_log_file_size $(human_bytes "$(vnum innodb_log_file_size)") x $(vnum innodb_log_files_in_group) files"
+        [[ -n $(dflt innodb_log_file_size) ]] && REDO_DESC+=", default for $MYSQL_SERIES: $(dflt innodb_log_file_size) x 2"
     fi
 }
 
@@ -68,7 +70,7 @@ rule_redo_log() {
     fill=$(redo_pressure)
 
     ev "Redo written: $(human_bytes "$win")/s in window (peak $(human_bytes "$peak")/s), $(human_bytes "$life")/s since start"
-    ev "Capacity $(human_bytes "$REDO_CAP") ($REDO_DESC) holds $(human_num "$(calc_int "$mins")") minutes of writes at $(human_bytes "$rate")/s"
+    ev "Capacity $(human_bytes "$REDO_CAP") ($REDO_DESC) holds $(human_dur "$(calc "$mins * 60")") of writes at $(human_bytes "$rate")/s"
     if [[ -n $fill ]]; then
         ev "Checkpoint age: max $(human_bytes "$CKPT_AGE") of $(human_bytes "$CKPT_MAX") = $(pct "$CKPT_FILL" 1)${MOD_FILL:+; modified age $(pct "$MOD_FILL" 1)} ($CKPT_SRC)$CKPT_EST"
         ev "Flushing thresholds: aggressive from ~$(pct $FLUSH_AGGRESSIVE 1), sync flush (writes stall) from ~$(pct $FLUSH_SYNC 1) of max checkpoint age"
@@ -97,7 +99,7 @@ rule_redo_log() {
             return
         elif is "$mins < 20"; then
             status=CHANGE conf=Medium REDO_UNDERSIZED=1
-            why="The redo log holds only $(calc_int "$mins") minutes of writes; at the next burst InnoDB will have to flush aggressively."
+            why="The redo log holds only $(human_dur "$(calc "$mins * 60")") of writes; at the next burst InnoDB will have to flush aggressively."
         else
             status=REVIEW conf=Low
             why="Less than an hour of writes fits, but the checkpoint age is not near the flushing thresholds. Growing it smooths flushing at the cost of longer crash recovery."
@@ -165,7 +167,7 @@ rule_io_capacity() {
     redo_capacity; checkpoint_fill
 
     ev "Pages flushed: $(human_num "$flushed")/s in window (peak $(human_num "$peak")/s) vs io_capacity $cap / io_capacity_max $capmax (defaults for $MYSQL_SERIES: $(dflt innodb_io_capacity) / $(dflt innodb_io_capacity_max))"
-    ev "Dirty pages: max $(human_num "$dirty_pct")% of the pool (innodb_max_dirty_pages_pct = $maxdirty)"
+    ev "Dirty pages: max $(human_num "$dirty_pct")% of the pool (innodb_max_dirty_pages_pct = $(human_num "$maxdirty"))"
     local fill; fill=$(redo_pressure)
     [[ -n $fill ]] && ev "Redo pressure: $(pct "$fill" 1) of max checkpoint age (aggressive flushing from ~$(pct $FLUSH_AGGRESSIVE 1))"
     if [[ -n $(h disk) ]]; then

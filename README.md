@@ -41,6 +41,82 @@ file is built by `tools/build.sh`; the tests check that it gives byte-identical
 output to the checkout version, with gawk and mawk, and it was run on CentOS 7
 (bash 4.2).
 
+## Example
+
+A 20-second capture from the test lab (Percona Server 8.4 under a write-heavy
+workload, with the redo log left at its 100M default). Excerpt; the full
+report is in [docs/example-output.txt](docs/example-output.txt).
+
+```text
+$ pt-stalk-suggest /var/lib/pt-stalk
+...
+Server
+----------------------------------------------------------------------------------------------------
+  Version            Percona Server 8.4.11-11  (rules for 8.4)
+  Host               lab-host
+  Uptime             4m 6s
+  CPUs               22  (busy avg 90.3%, max 94.5%; iowait avg 4.7%)
+  RAM                91.5G  (MemAvailable min 74.5G)
+  Swap               8G total, 0B used; swap-in avg 0.0 KiB/s; vm.swappiness 60
+  Data disk          dm-0 (/)  w/s avg 15028.7, %util avg 88.7 max 92.0
+  Threads_running    avg 8.85, max 11
+
+Summary
+----------------------------------------------------------------------------------------------------
+  Parameter                           Current        Suggested       Status  Conf.
+  innodb_redo_log_capacity            100M           1G              CHANGE  Medium
+  table_open_cache                    4000           8000            CHANGE  Low
+  open_files_limit                    8210           17000           CHANGE  Low
+  binlog_cache_size                   32K            128K            CHANGE  Low
+  innodb_io_capacity / _max           10000 / 20000  fix redo first  REVIEW  Low
+  sort_buffer_size                    256K           512K            REVIEW  Low
+  innodb_buffer_pool_size             256M           keep            OK      High
+  max_connections                     200            keep            OK      High
+  innodb_log_buffer_size              64M            keep            OK      High
+  innodb_lru_scan_depth               1024           keep            OK      High
+  innodb_thread_concurrency           0              keep            OK      Medium
+  durability (flush_log/sync_binlog)  1 / 1          keep            OK      High
+  thread_cache_size                   10             keep            OK      High
+  table_definition_cache              2000           keep            OK      High
+  innodb_open_files                   4000           keep            OK      High
+  max_prepared_stmt_count             16382          keep            OK      High
+  tmp_table_size                      16M            keep            OK      High
+  key_buffer_size                     8M             keep            OK      High
+
+Details (evidence and formulas)
+----------------------------------------------------------------------------------------------------
+
+  [CHANGE] innodb_redo_log_capacity   100M -> 1G   (confidence: Medium)
+    Evidence   Redo written: 58M/s in window (peak 74.5M/s), 6.9M/s since start
+               Capacity 100M (innodb_redo_log_capacity, default for 8.4: 100M) holds 1.7 s of
+               writes at 58M/s
+               Checkpoint age: max 83M of 83.3M = 99.6%; modified age 71.6% (Innodb_checkpoint_age,
+               max of every sample)
+               Flushing thresholds: aggressive from ~87.0%, sync flush (writes stall) from ~93.0%
+               of max checkpoint age
+    Formula    target = one hour of writes, at most max(buffer pool size, 2 x current) and 512G:
+               checkpoint age reached the aggressive-flushing zone
+    Why        InnoDB reached 99.6% of the max checkpoint age: it flushes pages furiously (and
+               stalls writes above ~93%) to free redo space. Dynamic since 8.0.30: SET PERSIST
+               innodb_redo_log_capacity = 1073741824;
+
+  [CHANGE] table_open_cache   4000 -> 8000   (confidence: Low)
+    Evidence   Opened_tables: 465/s in window (peak 774/s), 55.37/s since start
+               Open_tables: max 911 of table_open_cache 4000 (default for 8.4: 4000) (22.8%);
+               instances 16
+               Cache miss rate in window: 7.4%; overflows 452/s
+               Per instance: 4000 / 16 = 250 tables; a session always uses instance thread_id % 16,
+               and most reopens are overflows of one instance
+    Formula    new = 2 x current (rounded to 500), repeat until Opened_tables/s is near 0; requires
+               open_files_limit >= 10 + max_connections + 2 x table_open_cache = 16210
+    Why        Tables are evicted from a full instance while the cache as a whole is not full:
+               sessions touch more tables than one instance holds. Raise table_open_cache (dynamic)
+               so table_open_cache / instances covers the tables a busy session uses, or lower
+               table_open_cache_instances (needs a restart).
+
+...
+```
+
 ## What it checks
 
 | Group | Parameters |
