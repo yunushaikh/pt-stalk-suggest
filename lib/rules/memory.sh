@@ -137,28 +137,31 @@ rule_buffer_pool() {
         suggest innodb_buffer_pool_size CHANGE "$([[ $MEM_SWAPPING -eq 1 ]] && echo High || echo Medium)" \
             "$(human_bytes "$bp")" "$(human_bytes "$cap")" "$formula" \
             "The host is short of memory (swapping or mysqld above its budget). Shrink the buffer pool to the cap, or add RAM. Online resize: SET GLOBAL innodb_buffer_pool_size."
-    elif is "$total > 0 && $free_min / $total > 0.10" && ((warm)); then
-        suggest innodb_buffer_pool_size OK High "$(human_bytes "$bp")" "keep" "free pages > 10% of the pool after warm-up" \
-            "More than 10% of the pool stayed free: the working set fits. It could even be reduced if memory is needed elsewhere."
+    # Disk-read evidence comes before free pages: Percona's LRU manager keeps
+    # pages free even while the pool is too small (free pages and thousands of
+    # reads/s together), so "free pages > 10%" alone does not prove a fit.
     elif ((!warm)) && is "$miss_win > 0.001 || $wait_free > 0"; then
         suggest innodb_buffer_pool_size REVIEW Low "$(human_bytes "$bp")" "$(human_bytes "$(max2 "$bp" "$cap")")" "$formula" \
             "Disk reads are high, but MySQL started less than a day ago: part of it is the buffer pool warming up. Take another capture after a day of normal load before resizing."
-    elif is "$miss_win > 0.01 || $wait_free > 0"; then
+    elif is "$miss_win > 0.01"; then
         if is "$cap > $bp * 1.10" && [[ $MEM_SWAPPING -eq 0 ]]; then
             suggest innodb_buffer_pool_size CHANGE Medium "$(human_bytes "$bp")" "$(human_bytes "$cap")" "$formula" \
-                "More than 1% of page reads go to disk (or threads waited for free pages) and there is RAM headroom. Raise it toward the cap; recheck the miss rate after the change."
+                "More than 1% of page reads go to disk and there is RAM headroom. Raise it toward the cap; recheck the miss rate after the change."
         else
             suggest innodb_buffer_pool_size REVIEW Medium "$(human_bytes "$bp")" "no headroom" "$formula" \
                 "The working set does not fit in the pool, but there is no RAM to grow it (or the host is already swapping). Options: add RAM, reduce per-connection buffers, or fix the queries that scan large ranges."
         fi
-    elif is "$miss_win > 0.001"; then
+    elif is "$miss_win > 0.001 || $wait_free > 0"; then
         if is "$cap > $bp * 1.10" && [[ $MEM_SWAPPING -eq 0 ]]; then
             suggest innodb_buffer_pool_size REVIEW Low "$(human_bytes "$bp")" "$(human_bytes "$cap")" "$formula" \
-                "Miss rate between 0.1% and 1%: a larger pool would help somewhat, and there is RAM headroom."
+                "Between 0.1% and 1% of page reads go to disk$(is "$wait_free > 0" && echo ', and threads waited for free pages'): a larger pool would help somewhat, and there is RAM headroom."
         else
             suggest innodb_buffer_pool_size OK Medium "$(human_bytes "$bp")" "keep" "miss rate 0.1%-1%, no room to grow" \
                 "A larger pool would help a little, but the host is swapping or has no RAM headroom, so keep the current size."
         fi
+    elif is "$total > 0 && $free_min / $total > 0.10" && ((warm)); then
+        suggest innodb_buffer_pool_size OK High "$(human_bytes "$bp")" "keep" "few disk reads and free pages > 10% after warm-up" \
+            "Reads are served from memory and more than 10% of the pool stayed free: the working set fits. It could even be reduced if memory is needed elsewhere."
     else
         suggest innodb_buffer_pool_size OK High "$(human_bytes "$bp")" "keep" "miss rate < 0.1% (or no headroom needed)" \
             "Reads are served from memory."

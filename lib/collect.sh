@@ -7,7 +7,7 @@
 #   CAPTURES[]         prefixes (path without the "-mysqladmin" suffix) in use
 
 declare -gA STAT=() VARS=() HOST=() INNODB=()
-declare -ga CAPTURES=() SKIPPED_CAPTURES=()
+declare -ga CAPTURES=() SKIPPED_CAPTURES=() SKIPPED_OTHER_SERVER=()
 
 # ---------------------------------------------------------------------------
 # Capture discovery
@@ -27,6 +27,16 @@ capture_epoch() {
         return
     fi
     stat -c %Y "$p-mysqladmin"
+}
+
+# Which MySQL server a capture belongs to: server_uuid, else hostname:port
+capture_server_id() {
+    local f=$1-variables id
+    [[ -r $f ]] || { echo unknown; return; }
+    id=$(awk -F'\t' '/^Variable_name\t/ { inb = 1; next } inb && /^$/ { exit }
+        inb && $1 == "server_uuid" { u = $2 } inb && $1 == "hostname" { h = $2 } inb && $1 == "port" { p = $2 }
+        END { print (u != "" ? u : h ":" p) }' "$f")
+    echo "${id:-unknown}"
 }
 
 discover_captures() {
@@ -244,6 +254,14 @@ load_host() {
             's/.*Changed limits: (table_open_cache|max_connections|max_open_files): ([0-9]+) \(requested ([0-9]+)\).*/changed_\1=\2 \3/p' "${errs[@]}" | tail -3)
     fi
 
+    # Sessions waiting on the 5.7 query cache mutex, from the processlist samples
+    local -a pls; mapfile -t pls < <(sampled_files processlist)
+    if ((${#pls[@]})); then
+        while IFS='=' read -r k x; do HOST[$k]=$x; done < <(awk '
+            /^TS / { n++ } /State: Waiting for query cache lock/ { w++ }
+            END { printf "processlist_samples=%d\nqc_lock_waits=%d\n", n, w }' "${pls[@]}")
+    fi
+
     # vm.swappiness
     [[ -r $p-sysctl ]] && HOST[swappiness]=$(awk -F' = ' '$1 == "vm.swappiness" { print $2; exit }' "$p-sysctl")
 
@@ -350,16 +368,22 @@ collect_all() {
         e=$(capture_epoch "$p")
         up=$(awk -F'\t' '$1 == "#meta" { print $4; exit }' "$work/cap$i.tsv")
         start=$((e - up))
-        rows+=("$e"$'\t'"$start"$'\t'"$p"$'\t'"$work/cap$i.tsv")
+        rows+=("$e"$'\t'"$start"$'\t'"$p"$'\t'"$work/cap$i.tsv"$'\t'"$(capture_server_id "$p")")
     done
     ((${#rows[@]})) || die "no capture could be parsed"
 
-    local latest_start
-    latest_start=$(printf '%s\n' "${rows[@]}" | sort -n -k2,2 | tail -1 | cut -f2)
+    # A directory can hold captures of several servers (pt-stalk output from
+    # more than one host). Analyse the server of the newest capture only.
+    local server latest_start
+    server=$(printf '%s\n' "${rows[@]}" | sort -n -k1,1 | tail -1 | cut -f5)
+    latest_start=$(printf '%s\n' "${rows[@]}" | awk -F'\t' -v s="$server" '$5 == s' | sort -n -k2,2 | tail -1 | cut -f2)
+    SERVER_ID=$server
     local -a tsvs=()
-    local ep st pref tsv
-    while IFS=$'\t' read -r ep st pref tsv; do
-        if ((st < latest_start - 120)); then
+    local ep st pref tsv sid
+    while IFS=$'\t' read -r ep st pref tsv sid; do
+        if [[ $sid != "$server" ]]; then
+            SKIPPED_OTHER_SERVER+=("${pref##*/} ($sid)")
+        elif ((st < latest_start - 120)); then
             SKIPPED_CAPTURES+=("${pref##*/}")
         else
             CAPTURES+=("$pref"); tsvs+=("$tsv")

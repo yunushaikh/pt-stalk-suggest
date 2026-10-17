@@ -215,7 +215,7 @@ rule_lru_scan_depth() {
     if is "$waits > 0"; then
         if is "$cur < 4096"; then
             suggest innodb_lru_scan_depth CHANGE Medium "$cur" "$new" "new = min(2 x current, 4096)" \
-                "Threads had to wait for a free page: page cleaners do not free pages fast enough. Also make sure innodb_page_cleaners = innodb_buffer_pool_instances. Dynamic."
+                "Threads had to wait for a free page: page cleaners do not free pages fast enough.$(is "$cleaners < $inst" && echo ' Also set innodb_page_cleaners = innodb_buffer_pool_instances.') Dynamic."
         else
             suggest innodb_lru_scan_depth REVIEW Medium "$cur" "keep" "already >= 4096" \
                 "Free-page waits even with a deep LRU scan: the buffer pool is too small for the workload, or the disk is the limit."

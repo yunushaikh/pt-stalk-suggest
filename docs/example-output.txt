@@ -99,7 +99,8 @@ Details (evidence and formulas)
     Evidence   Binlog_cache_disk_use / Binlog_cache_use: 99.3% in window (7.07 trx/s), 90.7% since
                start
                Statement cache spills: 0.0% since start
-    Formula    new = 4 x current (power of 2), at most 4M
+    Formula    new = 4 x current (power of 2), at most 4M; repeat until fewer than 10% of
+               transactions spill
     Why        More than 10% of transactions spill their binlog events to a temporary file. The
                cache is allocated per connection only when it writes, so a few MB is affordable.
                Dynamic.

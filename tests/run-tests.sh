@@ -63,6 +63,31 @@ for fx in "$here"/fixtures/*.tar.gz; do
     fi
 done
 
+echo "query cache lock waits (5.7)"
+# The ps57-stalk capture has a 97% hit rate: REVIEW. Add processlist samples
+# showing sessions waiting on the query cache mutex: it must become CHANGE High.
+qc_line() { "$root/pt-stalk-suggest" --color never "$1" 2>&1 | grep -E '^  query_cache_type / _size '; }
+eq "high hit rate, no waits: REVIEW" "$(qc_line "$tmp/ps57-stalk" | awk '{print $(NF-1)}')" "REVIEW"
+cp -r "$tmp/ps57-stalk" "$tmp/ps57-qcwait"
+p=$(ls "$tmp/ps57-qcwait" | sed -n 's/-mysqladmin$//p' | tail -1)
+printf 'TS 1 2026-10-17 06:43:30\n*** 1. row ***\n  State: Waiting for query cache lock\nTS 2 2026-10-17 06:43:31\n*** 1. row ***\n  State: Sending data\n' >"$tmp/ps57-qcwait/$p-processlist"
+eq "lock waits seen: CHANGE High" "$(qc_line "$tmp/ps57-qcwait" | awk '{print $(NF-1), $NF}')" "CHANGE High"
+
+echo "directories with several servers or captures"
+# Captures of two servers in one directory: only the newest capture's server
+# is analysed, the other is listed as skipped.
+mkdir -p "$tmp/mixed"; cp "$tmp"/ps80-idle/* "$tmp"/ps84-idle/* "$tmp/mixed/"
+mixed=$("$root/pt-stalk-suggest" --color never "$tmp/mixed" 2>&1)
+eq "mixed servers: one capture used" "$(printf '%s\n' "$mixed" | awk '/Captures used/ {print $3}')" "1:"
+eq "mixed servers: version of the newest" "$(printf '%s\n' "$mixed" | awk '/^  Version/ {print $4}')" "8.4.11-11"
+eq "mixed servers: caveat names the skipped one" "$(printf '%s\n' "$mixed" | grep -c 'different MySQL server')" "1"
+mkdir -p "$tmp/same"; cp "$tmp"/ps84-idle/* "$tmp"/ps84-stalk/* "$tmp/same/"
+eq "same server: idle + triggered pair combined" "$("$root/pt-stalk-suggest" --color never "$tmp/same" | awk '/Captures used/ {print $3}')" "3:"
+one=$(ls "$tmp/ps84-stalk" | sed -n 's/-mysqladmin$//p' | head -1)
+eq "--prefix picks one capture" "$("$root/pt-stalk-suggest" --color never -p "$one" "$tmp/ps84-stalk" | awk '/Captures used/ {print $3, $4}')" "1: $one"
+mkdir -p "$tmp/empty"
+eq "empty directory: clear error" "$("$root/pt-stalk-suggest" "$tmp/empty" 2>&1 | head -1)" "ERROR: no pt-stalk captures (*-mysqladmin) found under $tmp/empty"
+
 echo "documentation sample"
 # docs/example-output.txt (shown in the README) must be what the tool prints
 # for the ps84-stalk fixture, so the sample never drifts from real output.

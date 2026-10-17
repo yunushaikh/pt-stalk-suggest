@@ -2,9 +2,9 @@ Summary
 ----------------------------------------------------------------------------------------------------
   Parameter                           Current    Suggested  Status  Conf. 
   innodb_redo_log_capacity            8M         1G         CHANGE  Medium
-  thread_cache_size                   0          16         CHANGE  Medium
   table_open_cache                    64         500        CHANGE  High  
   innodb_log_buffer_size              1M         64M        REVIEW  Low   
+  thread_cache_size                   0          16         REVIEW  Low   
   innodb_open_files                   300        1000       REVIEW  Low   
   innodb_buffer_pool_size             64M        keep       OK      High  
   max_connections                     200        keep       OK      High  
@@ -22,9 +22,9 @@ Summary
 
 Details (evidence and formulas)
   [CHANGE] innodb_redo_log_capacity   8M -> 1G   (confidence: Medium)
-  [CHANGE] thread_cache_size   0 -> 16   (confidence: Medium)
   [CHANGE] table_open_cache   64 -> 500   (confidence: High)
   [REVIEW] innodb_log_buffer_size   1M -> 64M   (confidence: Low)
+  [REVIEW] thread_cache_size   0 -> 16   (confidence: Low)
   [REVIEW] innodb_open_files   300 -> 1000   (confidence: Low)
   [OK] innodb_buffer_pool_size   64M -> keep   (confidence: High)
   [OK] max_connections   200 -> keep   (confidence: High)

@@ -83,7 +83,7 @@ rule_binlog_cache() {
             suggest binlog_cache_size REVIEW Medium "$(human_bytes "$cur")" "keep" "already >= 4M" \
                 "Transactions are larger than a 4M cache: they are big transactions; consider splitting them instead of growing a per-connection buffer."
         else
-            suggest binlog_cache_size CHANGE Medium "$(human_bytes "$cur")" "$(human_bytes "$new")" "new = 4 x current (power of 2), at most 4M" \
+            suggest binlog_cache_size CHANGE Medium "$(human_bytes "$cur")" "$(human_bytes "$new")" "new = 4 x current (power of 2), at most 4M; repeat until fewer than 10% of transactions spill" \
                 "More than 10% of transactions spill their binlog events to a temporary file. The cache is allocated per connection only when it writes, so a few MB is affordable. Dynamic."
         fi
     else
@@ -132,8 +132,18 @@ rule_query_cache() {
         return
     fi
     ev "Hit rate in window $(pct "$ratio" 1) (Qcache_hits $(human_num "$hits")/s vs Com_select $(human_num "$sel")/s); lowmem prunes $(human_num "$prunes")/s; free memory $(human_bytes "$(sn Qcache_free_memory)")"
-    local conf=Medium
-    is "$prunes > 0 || $ratio < 0.5" && conf=High
-    suggest "query_cache_type / _size" CHANGE "$conf" "$type / $(human_bytes "$size")" "OFF / 0" "disable" \
-        "The query cache is a global mutex: every write invalidates entries and every SELECT checks it, which serialises concurrent sessions. It is removed in 8.0. Disable it and verify the read latency; both can be changed at runtime."
+    local waits samples
+    waits=$(num "$(h qc_lock_waits)"); samples=$(num "$(h processlist_samples)")
+    ((samples)) && ev "Processlist: $waits session(s) in \"Waiting for query cache lock\" across $samples samples"
+    local why="The query cache is a global mutex: every write invalidates entries and every SELECT checks it, which serialises concurrent sessions. It is removed in 8.0."
+    if ((waits > 0)); then
+        suggest "query_cache_type / _size" CHANGE High "$type / $(human_bytes "$size")" "OFF / 0" "disable" \
+            "$why Sessions were seen waiting for the query cache lock. Disable it; both settings can be changed at runtime."
+    elif is "$prunes > 0 || $ratio < 0.5"; then
+        suggest "query_cache_type / _size" CHANGE High "$type / $(human_bytes "$size")" "OFF / 0" "disable" \
+            "$why Here it also helps little (hit rate under 50% or entries pruned for lack of memory). Disable it and verify the read latency; both can be changed at runtime."
+    else
+        suggest "query_cache_type / _size" REVIEW Medium "$type / $(human_bytes "$size")" "OFF / 0 (test first)" "hit rate >= 50%, no lowmem prunes, no lock waits seen" \
+            "$why But it serves $(pct "$ratio" 1) of SELECTs here, and no session was seen waiting for its lock. Disabling it sends those reads to InnoDB, so test with query_cache_type = OFF at a quiet time and compare latency before making it permanent."
+    fi
 }

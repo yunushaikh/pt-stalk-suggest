@@ -113,6 +113,7 @@ section "Source"
 kv "Directory" "$DIR"
 names=(); for p in "${CAPTURES[@]}"; do names+=("${p##*/}"); done
 kv "Captures used" "${#CAPTURES[@]}: ${names[*]}"
+((${#SKIPPED_OTHER_SERVER[@]})) && kv "Skipped" "${#SKIPPED_OTHER_SERVER[@]} capture(s) of another server (see Caveats)"
 ovl=$(num "$(h overlap_secs)")
 kv "Samples" "$(h samples) per-second samples, $(h window_secs) s of window$( ((ovl > 0)) && echo " (captures overlap by $ovl s)")"
 

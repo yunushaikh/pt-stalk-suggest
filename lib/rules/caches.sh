@@ -14,7 +14,13 @@ rule_thread_cache() {
     new=$(round_up "$(max2 "$(max2 "$(calc_int "$cur * 2")" "$(calc "$tcmax - $tcmin")")" 16)" 8)
     new=$(min2 "$new" "$(max2 "$(vnum max_connections)" 16)")
     local formula="new = max(2 x current, Threads_connected max - min in window, 16), rounded to 8, at most max_connections"
-    if is "$created >= 1"; then
+    # pt-stalk itself opens 12-17 connections/s while it collects (measured on
+    # idle lab servers, pt-stalk 3.7.1 defaults), so a low rate may be mostly its own
+    if is "$created >= 1 && $conns < 25"; then
+        ev "pt-stalk itself opens about 12-17 connections/s while collecting (measured on idle servers): at $(human_num "$conns")/s most of these may be pt-stalk's own"
+        suggest thread_cache_size REVIEW Low "$cur" "$new" "$formula" \
+            "Threads are created for new connections, but the connection rate is low enough to be mostly pt-stalk's own. Check Threads_created against Connections outside a capture before changing it."
+    elif is "$created >= 1"; then
         suggest thread_cache_size CHANGE Medium "$cur" "$new" "$formula" \
             "Threads are created more than once per second: each one costs a thread start. Dynamic: SET PERSIST thread_cache_size."
     elif is "$miss_life > 0.10 && $(sn Threads_created life) > 0.1"; then

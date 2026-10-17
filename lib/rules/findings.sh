@@ -41,6 +41,7 @@ data_caveats() {
     local up secs; up=$(num "$(h uptime)"); secs=$(num "$(h window_secs)")
     ((up < 86400)) && caveat "MySQL has been up only $(human_secs "$up"): counters since start do not represent normal load yet, and the buffer pool may still be warming up."
     ((secs < 20)) && caveat "Only $secs seconds of samples: rates in the window are noisy."
+    ((${#SKIPPED_OTHER_SERVER[@]})) && caveat "Skipped captures of a different MySQL server; this report covers server $SERVER_ID only. Run the tool on each server's captures separately: ${SKIPPED_OTHER_SERVER[*]}"
     ((${#SKIPPED_CAPTURES[@]})) && caveat "Skipped captures from before a MySQL restart (counters reset): ${SKIPPED_CAPTURES[*]}"
     is "$(num "$(h mysqld_count)") > 1" && caveat "ps shows $(h mysqld_count) mysqld processes on this host: the memory budget assumes the largest one and counts the others as other processes."
     [[ -z $(h mem_total) || $(h mem_total) == 0 ]] && caveat "No meminfo in the capture: memory-based suggestions are not reliable."

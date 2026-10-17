@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Captures of different servers were merged:** a directory with pt-stalk output from two MySQL servers was combined into one report. Captures are now grouped by `server_uuid` (else hostname:port); only the newest capture's server is analysed and the others are listed in the caveats.
+- **Buffer pool reported "the working set fits"** while thousands of pages per second were read from disk. Percona's LRU manager keeps pages free even when the pool is too small, so the disk-read evidence is now checked before free pages.
+- **Query cache with a high hit rate** is now REVIEW ("test first") instead of CHANGE. It is CHANGE High when the hit rate is under 50%, entries are pruned for lack of memory, or the processlist shows sessions in "Waiting for query cache lock".
+- **thread_cache_size on quiet servers:** pt-stalk itself opens about 12–17 connections/s while collecting (measured on idle servers). Below 25 connections/s the suggestion is REVIEW and says so.
+- The LRU advice mentions innodb_page_cleaners only when it differs from the buffer pool instance count.
+
 ## [0.1.1] - 2026-10-17
 
 ### Added
