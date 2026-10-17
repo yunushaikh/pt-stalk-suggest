@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-17
+
 ### Added
 
 - **Example report in the README**, with the full sample in [docs/example-output.txt](docs/example-output.txt). A test keeps the sample identical to real output.
@@ -20,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Buffer pool growth suggested on a trickle of reads:** a miss rate now counts only with at least 10 disk reads/s (or free-page waits).
 - **Redo capacity evidence:** short times now show in seconds ("holds 1.7 s of writes", not "0 minutes"), and the duplicated size in brackets is gone.
 - **innodb_max_dirty_pages_pct** is shown as `90`, not `90.000000`.
+
+### Changed
+
+- CI and release workflows use `actions/checkout@v5` and `softprops/action-gh-release@v3`; the previous versions ran on the retired Node.js 20.
 
 ## [0.1.0] - 2026-10-15
 

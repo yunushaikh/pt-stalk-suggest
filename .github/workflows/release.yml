@@ -40,7 +40,7 @@ jobs:
           echo "tag=${REF#v}" >> "$GITHUB_OUTPUT"
           echo "Release ref: $REF (version ${REF#v})"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ steps.meta.outputs.ref }}
 
@@ -85,7 +85,7 @@ jobs:
           } >> release-notes.md
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.meta.outputs.ref }}
           body_path: release-notes.md
