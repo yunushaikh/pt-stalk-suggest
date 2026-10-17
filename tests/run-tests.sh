@@ -65,12 +65,12 @@ done
 
 echo "documentation sample"
 # docs/example-output.txt (shown in the README) must be what the tool prints
-# for the ps84 fixture, so the sample never drifts from real output.
-sample=$("$root/pt-stalk-suggest" --color never "$tmp/ps84" 2>&1 | sed "s|$tmp/ps84|/var/lib/pt-stalk|; s/[[:space:]]*$//")
+# for the ps84-stalk fixture, so the sample never drifts from real output.
+sample=$("$root/pt-stalk-suggest" --color never "$tmp/ps84-stalk" 2>&1 | sed "s|$tmp/ps84-stalk|/var/lib/pt-stalk|; s/[[:space:]]*$//")
 if ((update)); then
     printf '%s\n' "$sample" >"$root/docs/example-output.txt"; ok "docs/example-output.txt (updated)"
 elif diff -u "$root/docs/example-output.txt" <(printf '%s\n' "$sample") >"$tmp/diff"; then
-    ok "docs/example-output.txt matches the ps84 fixture"
+    ok "docs/example-output.txt matches the ps84-stalk fixture"
 else
     bad "docs/example-output.txt is out of date (run tests/run-tests.sh --update)" "$(head -20 "$tmp/diff")"
 fi

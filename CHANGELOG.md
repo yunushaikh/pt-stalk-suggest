@@ -11,8 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Example report in the README**, with the full sample in [docs/example-output.txt](docs/example-output.txt). A test keeps the sample identical to real output.
 
+- **Six more test fixtures** taken after almost two days of uptime: an idle capture and a triggered pair (`Threads_running > 4`) for each of 5.7, 8.0 and 8.4. Lab `capture.sh` gained `idle` and `stalk` modes, and `make-fixture.sh` packs every capture in a directory.
+- **Overlapping captures are reported** ("captures overlap by 17 s"). This happens when pt-stalk's `--sleep` is shorter than `--run-time`.
+
 ### Fixed
 
+- **False redo pressure on idle servers:** with no dirty pages InnoDB prints the current LSN as "Modified age" (`buf_pool_get_oldest_modification_lwm()` returns 0). Values above the max checkpoint age are now ignored.
+- **Buffer pool growth suggested on a trickle of reads:** a miss rate now counts only with at least 10 disk reads/s (or free-page waits).
 - **Redo capacity evidence:** short times now show in seconds ("holds 1.7 s of writes", not "0 minutes"), and the duplicated size in brackets is gone.
 - **innodb_max_dirty_pages_pct** is shown as `90`, not `90.000000`.
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build a test fixture from a pt-stalk capture taken in the synthetic lab.
 #
-#   tests/make-fixture.sh /path/to/captures/ps57/2026_10_15_09_45_41 ps57
+#   tests/make-fixture.sh /path/to/captures/ps57/2026_10_15_09_45_41 ps57   one capture
+#   tests/make-fixture.sh /path/to/captures/ps57-stalk ps57-stalk          every capture in a dir
 #
 # Keeps only the files pt-stalk-suggest reads and scrubs host details:
 #   - the hostname becomes "lab-host" everywhere
@@ -10,14 +11,22 @@
 #   - variables keeps the SHOW GLOBAL VARIABLES block only
 # Never use this on customer data: fixtures are committed to the repository.
 set -euo pipefail
-prefix=${1:?capture prefix (path without the -suffix)}
+src=${1:?capture prefix (path without the -suffix) or a directory of captures}
 name=${2:?fixture name}
 here=$(cd "$(dirname "$0")" && pwd)
-base=${prefix##*/}
-host=$(head -1 "$prefix-hostname")
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 out=$tmp/$name; mkdir -p "$out"
 
+if [[ -d $src ]]; then
+    mapfile -t prefixes < <(find "$src" -name '*-mysqladmin' | sed 's/-mysqladmin$//' | sort)
+else
+    prefixes=("$src")
+fi
+((${#prefixes[@]})) || { echo "no captures in $src" >&2; exit 1; }
+
+for prefix in "${prefixes[@]}"; do
+base=${prefix##*/}
+host=$(head -1 "$prefix-hostname")
 scrub() { sed "s/$host/lab-host/g"; }
 
 for f in mysqladmin meminfo vmstat mpstat iostat innodbstatus1 innodbstatus2; do
@@ -32,6 +41,7 @@ awk 'NR == 1 { print; for (i = 1; i <= NF; i++) if ($i == "RSS") rc = i; next }
      $0 ~ /(^|\/| )mysqld( |$)/ { print; next }
      { o += $rc }
      END { printf "root 1 0 0 0 %d 0 00:00 ? 00:00:00 other-processes\n", o }' "$prefix-ps" >"$out/$base-ps"
+done
 
 if grep -rqiE "$USER|${USER%%.*}" "$out"; then
     grep -rliE "$USER|${USER%%.*}" "$out" >&2

@@ -43,31 +43,38 @@ output to the checkout version, with gawk and mawk, and it was run on CentOS 7
 
 ## Example
 
-A 20-second capture from the test lab (Percona Server 8.4 under a write-heavy
-workload, with the redo log left at its 100M default). Excerpt; the full
-report is in [docs/example-output.txt](docs/example-output.txt).
+Two triggered captures from the test lab: Percona Server 8.4, up for almost
+two days, with pt-stalk firing on `Threads_running > 4` under a write-heavy
+workload and the redo log left at its 100M default. Excerpt; the full report
+is in [docs/example-output.txt](docs/example-output.txt).
 
 ```text
 $ pt-stalk-suggest /var/lib/pt-stalk
 ...
+Source
+----------------------------------------------------------------------------------------------------
+  Directory          /var/lib/pt-stalk
+  Captures used      2: 2026_10_17_06_47_56 2026_10_17_06_48_08
+  Samples            60 per-second samples, 58 s of window (captures overlap by 17 s)
+
 Server
 ----------------------------------------------------------------------------------------------------
   Version            Percona Server 8.4.11-11  (rules for 8.4)
   Host               lab-host
-  Uptime             4m 6s
-  CPUs               22  (busy avg 90.3%, max 94.5%; iowait avg 4.7%)
-  RAM                91.5G  (MemAvailable min 74.5G)
+  Uptime             1d 21h
+  CPUs               22  (busy avg 66.8%, max 84.6%; iowait avg 10.6%)
+  RAM                91.5G  (MemAvailable min 70.2G)
   Swap               8G total, 0B used; swap-in avg 0.0 KiB/s; vm.swappiness 60
-  Data disk          dm-0 (/)  w/s avg 15028.7, %util avg 88.7 max 92.0
-  Threads_running    avg 8.85, max 11
+  Data disk          dm-0 (/)  w/s avg 11357.2, %util avg 74.2 max 85.4
+  Threads_running    avg 8.40, max 13
 
 Summary
 ----------------------------------------------------------------------------------------------------
   Parameter                           Current        Suggested       Status  Conf.
-  innodb_redo_log_capacity            100M           1G              CHANGE  Medium
-  table_open_cache                    4000           8000            CHANGE  Low
-  open_files_limit                    8210           17000           CHANGE  Low
-  binlog_cache_size                   32K            128K            CHANGE  Low
+  innodb_redo_log_capacity            100M           1G              CHANGE  High
+  table_open_cache                    4000           8000            CHANGE  Medium
+  open_files_limit                    8210           17000           CHANGE  Medium
+  binlog_cache_size                   32K            128K            CHANGE  Medium
   innodb_io_capacity / _max           10000 / 20000  fix redo first  REVIEW  Low
   sort_buffer_size                    256K           512K            REVIEW  Low
   innodb_buffer_pool_size             256M           keep            OK      High
@@ -86,25 +93,25 @@ Summary
 Details (evidence and formulas)
 ----------------------------------------------------------------------------------------------------
 
-  [CHANGE] innodb_redo_log_capacity   100M -> 1G   (confidence: Medium)
-    Evidence   Redo written: 58M/s in window (peak 74.5M/s), 6.9M/s since start
-               Capacity 100M (innodb_redo_log_capacity, default for 8.4: 100M) holds 1.7 s of
-               writes at 58M/s
-               Checkpoint age: max 83M of 83.3M = 99.6%; modified age 71.6% (Innodb_checkpoint_age,
-               max of every sample)
+  [CHANGE] innodb_redo_log_capacity   100M -> 1G   (confidence: High)
+    Evidence   Redo written: 75.6M/s in window (peak 98.4M/s), 425.2K/s since start
+               Capacity 100M (innodb_redo_log_capacity, default for 8.4: 100M) holds 1.3 s of
+               writes at 75.6M/s
+               Checkpoint age: max 83.3M of 83.3M = 100.0%; modified age 74.6%
+               (Innodb_checkpoint_age, max of every sample)
                Flushing thresholds: aggressive from ~87.0%, sync flush (writes stall) from ~93.0%
                of max checkpoint age
     Formula    target = one hour of writes, at most max(buffer pool size, 2 x current) and 512G:
                checkpoint age reached the aggressive-flushing zone
-    Why        InnoDB reached 99.6% of the max checkpoint age: it flushes pages furiously (and
+    Why        InnoDB reached 100.0% of the max checkpoint age: it flushes pages furiously (and
                stalls writes above ~93%) to free redo space. Dynamic since 8.0.30: SET PERSIST
                innodb_redo_log_capacity = 1073741824;
 
-  [CHANGE] table_open_cache   4000 -> 8000   (confidence: Low)
-    Evidence   Opened_tables: 465/s in window (peak 774/s), 55.37/s since start
-               Open_tables: max 911 of table_open_cache 4000 (default for 8.4: 4000) (22.8%);
+  [CHANGE] table_open_cache   4000 -> 8000   (confidence: Medium)
+    Evidence   Opened_tables: 752/s in window (peak 1046/s), 4.02/s since start
+               Open_tables: max 1235 of table_open_cache 4000 (default for 8.4: 4000) (30.9%);
                instances 16
-               Cache miss rate in window: 7.4%; overflows 452/s
+               Cache miss rate in window: 7.5%; overflows 752/s
                Per instance: 4000 / 16 = 250 tables; a session always uses instance thread_id % 16,
                and most reopens are overflows of one instance
     Formula    new = 2 x current (rounded to 500), repeat until Opened_tables/s is near 0; requires

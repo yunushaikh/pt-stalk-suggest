@@ -6,8 +6,14 @@ Three Percona Server versions in docker with deliberately poor settings (5.7,
 ```
 docker compose -p pt-stalk-suggestion-lab -f lab/docker-compose.yml up -d
 bash lab/setup-data.sh            # 300 small tables, a 200k-row table, a write table
-bash lab/capture.sh ps57 20       # workload + pt-stalk --no-stalk for 20 s
-tests/make-fixture.sh lab/captures/ps57/<prefix> ps57
+bash lab/capture.sh ps57 20                 # workload + pt-stalk --no-stalk for 20 s
+bash lab/capture.sh ps57 30 idle            # no workload: a quiet, healthy server
+bash lab/capture.sh ps57 30 stalk           # pt-stalk triggers on Threads_running > 4, twice
+tests/make-fixture.sh lab/captures/ps57/<prefix> ps57        # one capture
+tests/make-fixture.sh lab/captures/ps57 ps57-stalk           # every capture in the directory
+
+The `*-idle` and `*-stalk` fixtures were taken after the servers had been up
+for almost two days, so they show warmed-up counters.
 ```
 
 `capture.sh` runs pt-stalk from the host, so it needs Percona Toolkit and the

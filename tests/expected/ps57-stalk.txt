@@ -1,0 +1,61 @@
+Summary
+----------------------------------------------------------------------------------------------------
+  Parameter                             Current    Suggested       Status  Conf. 
+  innodb_log_file_size (x files)        16M        512M x 2        CHANGE  High  
+  innodb_lru_scan_depth                 1024       2048            CHANGE  Medium
+  thread_cache_size                     0          16              CHANGE  Medium
+  table_open_cache                      64         500             CHANGE  Medium
+  binlog_cache_size                     4K         16K             CHANGE  Medium
+  query_cache_type / _size              ON / 64M   OFF / 0         CHANGE  Medium
+  innodb_io_capacity / _max             100 / 200  fix redo first  REVIEW  Low   
+  innodb_open_files                     300        1000            REVIEW  Low   
+  innodb_buffer_pool_size               64M        keep            OK      High  
+  max_connections                       200        keep            OK      High  
+  innodb_log_buffer_size                1M         keep            OK      High  
+  innodb_thread_concurrency             0          keep            OK      Medium
+  durability (flush_log/sync_binlog)    1 / 1      keep            OK      High  
+  table_definition_cache                400        keep            OK      High  
+  open_files_limit                      5000       keep            OK      High  
+  max_prepared_stmt_count               16382      keep            OK      High  
+  tmp_table_size = max_heap_table_size  1M         keep            OK      High  
+  sort_buffer_size                      32K        keep            OK      High  
+  key_buffer_size                       8M         keep            OK      High  
+
+Details (evidence and formulas)
+  [CHANGE] innodb_log_file_size (x files)   16M -> 512M x 2   (confidence: High)
+  [CHANGE] innodb_lru_scan_depth   1024 -> 2048   (confidence: Medium)
+  [CHANGE] thread_cache_size   0 -> 16   (confidence: Medium)
+  [CHANGE] table_open_cache   64 -> 500   (confidence: Medium)
+  [CHANGE] binlog_cache_size   4K -> 16K   (confidence: Medium)
+  [CHANGE] query_cache_type / _size   ON / 64M -> OFF / 0   (confidence: Medium)
+  [REVIEW] innodb_io_capacity / _max   100 / 200 -> fix redo first   (confidence: Low)
+  [REVIEW] innodb_open_files   300 -> 1000   (confidence: Low)
+  [OK] innodb_buffer_pool_size   64M -> keep   (confidence: High)
+  [OK] max_connections   200 -> keep   (confidence: High)
+  [OK] innodb_log_buffer_size   1M -> keep   (confidence: High)
+  [OK] innodb_thread_concurrency   0 -> keep   (confidence: Medium)
+  [OK] durability (flush_log/sync_binlog)   1 / 1 -> keep   (confidence: High)
+  [OK] table_definition_cache   400 -> keep   (confidence: High)
+  [OK] open_files_limit   5000 -> keep   (confidence: High)
+  [OK] max_prepared_stmt_count   16382 -> keep   (confidence: High)
+  [OK] tmp_table_size = max_heap_table_size   1M -> keep   (confidence: High)
+  [OK] sort_buffer_size   32K -> keep   (confidence: High)
+  [OK] key_buffer_size   8M -> keep   (confidence: High)
+Other findings (not fixed by configuration)
+----------------------------------------------------------------------------------------------------
+  * Joins without a usable index: Select_full_join 14.17/s. Find them in the slow log / 
+    performance_schema digests (SUM_SELECT_FULL_JOIN).
+  * Full table scans: Handler_read_rnd_next 374.6k rows/s, Select_scan 20.41/s. Indexing these 
+    queries reduces buffer pool churn and CPU.
+
+Caveats
+----------------------------------------------------------------------------------------------------
+  * ps shows 3 mysqld processes on this host: the memory budget assumes the largest one and counts 
+    the others as other processes.
+  * Could not match datadir to an iostat device; disk numbers use the busiest device (dm-0).
+  * RAM comes from /proc/meminfo, which shows the host's memory even when mysqld runs in a 
+    container or pod with a lower memory limit; pt-stalk does not record cgroup limits, so memory 
+    suggestions assume the whole host is available.
+  * pt-stalk captures a short window, often during an incident. Window rates show that moment; 
+    settings should fit normal load with headroom for it, so compare with the 'since start' figures 
+    before changing anything.
