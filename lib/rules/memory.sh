@@ -129,6 +129,10 @@ rule_buffer_pool() {
     local warm=1 uptime; uptime=$(num "$(h uptime)")
     ((uptime < 86400)) && warm=0
 
+    # Ignore miss rates on a trickle of reads: growth needs >= 10 disk reads/s
+    local rps; rps=$(sn Innodb_buffer_pool_reads win)
+    if is "$rps < 10" && is "$wait_free == 0"; then miss_win=0; fi
+
     if is "$bp > $cap * 1.05" && { [[ $MEM_SWAPPING -eq 1 ]] || is "$MEM_RSS > $MEM_BUDGET"; }; then
         suggest innodb_buffer_pool_size CHANGE "$([[ $MEM_SWAPPING -eq 1 ]] && echo High || echo Medium)" \
             "$(human_bytes "$bp")" "$(human_bytes "$cap")" "$formula" \

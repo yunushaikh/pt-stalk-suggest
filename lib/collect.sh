@@ -103,7 +103,13 @@ metrics_from_mysqladmin() {
 aggregate_metrics() {
     awk -F'\t' '
         FNR == 1 { cap++ }
-        $1 == "#meta" { samples += $2; secs += $3; uplast = $4; next }
+        $1 == "#meta" {
+            samples += $2; secs += $3; start = $4 - $3
+            # pt-stalk starts the next collection after --sleep, which can be
+            # shorter than --run-time: windows may overlap
+            if (cap > 1 && start < uplast) overlap += uplast - start
+            uplast = $4; next
+        }
         {
             v = $1
             if (!(v in first)) { first[v] = $2; order[++n] = v; mn[v] = $4; mx[v] = $5 }
@@ -116,7 +122,7 @@ aggregate_metrics() {
             if (!(v in peak) || $9 > peak[v]) peak[v] = $9
         }
         END {
-            printf "#meta\t%d\t%d\t%d\t%d\n", samples, secs, uplast, cap
+            printf "#meta\t%d\t%d\t%d\t%d\t%d\n", samples, secs, uplast, cap, overlap
             for (i = 1; i <= n; i++) {
                 v = order[i]
                 printf "%s\t%s\t%s\t%s\t%s\t%.4f\t%s\t%.6f\t%s\n", v, first[v], last[v], mn[v], mx[v], \
@@ -129,7 +135,7 @@ load_metrics() {
     local tsv=$1 name first last mn mx avg life win peak
     while IFS=$'\t' read -r name first last mn mx avg life win peak; do
         if [[ $name == "#meta" ]]; then
-            HOST[samples]=$first HOST[window_secs]=$last HOST[uptime]=$mn HOST[captures_used]=$mx
+            HOST[samples]=$first HOST[window_secs]=$last HOST[uptime]=$mn HOST[captures_used]=$mx HOST[overlap_secs]=${avg:-0}
             continue
         fi
         STAT["$name|first"]=$first STAT["$name|last"]=$last

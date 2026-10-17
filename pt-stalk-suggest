@@ -113,7 +113,8 @@ section "Source"
 kv "Directory" "$DIR"
 names=(); for p in "${CAPTURES[@]}"; do names+=("${p##*/}"); done
 kv "Captures used" "${#CAPTURES[@]}: ${names[*]}"
-kv "Samples" "$(h samples) per-second samples, $(h window_secs) s of window"
+ovl=$(num "$(h overlap_secs)")
+kv "Samples" "$(h samples) per-second samples, $(h window_secs) s of window$( ((ovl > 0)) && echo " (captures overlap by $ovl s)")"
 
 section "Server"
 kv "Version" "$MYSQL_FLAVOR ${VARS[version]:-unknown}  (rules for $MYSQL_SERIES)"

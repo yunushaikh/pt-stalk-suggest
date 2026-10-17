@@ -50,7 +50,10 @@ checkpoint_fill() {
     CKPT_FILL="" MOD_FILL="" CKPT_AGE="" CKPT_MAX=""
     if [[ -n $age && -n $max ]] && is "$max > 0"; then
         CKPT_FILL=$(calc "$age / $max"); CKPT_AGE=$age; CKPT_MAX=$max
-        [[ -n $mod ]] && MOD_FILL=$(calc "$mod / $max")
+        # With no dirty pages InnoDB prints current_lsn - 0 as the modified age
+        # (buf_pool_get_oldest_modification_lwm() returns 0, buf0buf.cc). A real
+        # modified age cannot exceed the max checkpoint age, so ignore those.
+        [[ -n $mod ]] && is "$mod <= $max" && MOD_FILL=$(calc "$mod / $max")
     fi
 }
 
