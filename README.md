@@ -2,7 +2,7 @@
 
 Suggest MySQL configuration changes from a raw pt-stalk directory.
 
-Point it at the directory a customer uploaded. It reads every capture in it,
+It reads every capture in pt-stalk,
 turns the per-second status samples into rates (as `pt-mext -r` does), measures
 the host (RAM, CPUs, disk, swap, mysqld memory) and prints, for each parameter:
 current value, suggested value, the evidence, the formula used and a
