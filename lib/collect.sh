@@ -296,13 +296,14 @@ load_disk() {
             for (i = 1; i <= NF; i++) col[$i] = i
             # sysstat < 12 has a single "await" column
             wa = ("w_await" in col) ? col["w_await"] : col["await"]
+            rw = ("r_await" in col) ? col["r_await"] : col["await"]
             next
         }
         blk < 2 || NF < 5 || /^Linux/ { next }       # block 1 is the since-boot average
         {
             d = $1; seen[d] = 1; n[d]++
             r = $col["r/s"]; w = $col["w/s"]; u = $col["%util"]; a = $wa
-            sr[d] += r; sw[d] += w; su[d] += u; sa[d] += a
+            sr[d] += r; sw[d] += w; su[d] += u; sa[d] += a; sra[d] += $rw
             if (r > mr[d]) mr[d] = r
             if (w > mw[d]) mw[d] = w
             if (u > mu[d]) mu[d] = u
@@ -317,6 +318,7 @@ load_disk() {
             printf "disk=%s\ndisk_how=%s\ndisk_samples=%d\n", pick, how, c
             printf "disk_r_avg=%.1f\ndisk_r_max=%.1f\ndisk_w_avg=%.1f\ndisk_w_max=%.1f\n", sr[pick] / c, mr[pick], sw[pick] / c, mw[pick]
             printf "disk_util_avg=%.1f\ndisk_util_max=%.1f\ndisk_wawait_avg=%.2f\ndisk_wawait_max=%.2f\n", su[pick] / c, mu[pick], sa[pick] / c, ma[pick]
+            printf "disk_rawait_avg=%.2f\n", sra[pick] / c
         }' "${ios[@]}")
 }
 
@@ -337,6 +339,10 @@ load_innodb() {
         /^Max checkpoint age/    { keep("max_checkpoint_age", $NF) }
         /^Modified age/          { keep("modified_age", $NF) }
         /^History list length/   { keep("history_list", $NF) }
+        # BUFFER POOL AND MEMORY (buf0buf.cc buf_print_io_instance); the first
+        # block is the whole pool, later ones are per instance: keep the first
+        /youngs\/s, .* non-youngs\/s/ && !(FILENAME in yseen) { yseen[FILENAME] = 1; keep("young_rate", $1); keep("notyoung_rate", $3) }
+        /evicted without access/ && !(FILENAME in eseen) { eseen[FILENAME] = 1; e = $0; sub(/.*evicted without access /, "", e); sub(/\/s.*/, "", e); keep("evicted_noaccess", e + 0) }
         /queries inside InnoDB/  { keep("queries_inside", $1); keep("queries_queued", $(NF - 3)) }
         /has waited at/          { w[FILENAME]++ }
         END {

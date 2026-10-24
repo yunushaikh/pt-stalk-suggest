@@ -50,25 +50,25 @@ Transactions and locks
 
 Summary
 ----------------------------------------------------------------------------------------------------
-  Parameter                           Current    Suggested       Status  Conf. 
-  innodb_redo_log_capacity            8M         1G              CHANGE  Medium
-  innodb_log_buffer_size              1M         64M             CHANGE  Medium
-  thread_cache_size                   0          16              CHANGE  Low   
-  table_open_cache                    64         500             CHANGE  Medium
-  table_definition_cache              400        600             CHANGE  Low   
-  binlog_cache_size                   4K         16K             CHANGE  Low   
-  innodb_buffer_pool_size             64M        61.1G           REVIEW  Low   
-  innodb_io_capacity / _max           100 / 200  fix redo first  REVIEW  Low   
-  innodb_open_files                   300        1000            REVIEW  Low   
-  tmp_table_size                      1M         2M              REVIEW  Low   
-  sort_buffer_size                    32K        64K             REVIEW  Low   
-  max_connections                     200        keep            OK      High  
-  innodb_lru_scan_depth               1024       keep            OK      High  
-  innodb_thread_concurrency           0          keep            OK      Medium
-  durability (flush_log/sync_binlog)  1 / 1      keep            OK      High  
-  open_files_limit                    5000       keep            OK      High  
-  max_prepared_stmt_count             16382      keep            OK      High  
-  key_buffer_size                     8M         keep            OK      High  
+  Parameter                           Current    Suggested            Status  Conf. 
+  innodb_redo_log_capacity            8M         1G                   CHANGE  Medium
+  innodb_log_buffer_size              1M         64M                  CHANGE  Medium
+  thread_cache_size                   0          16                   CHANGE  Low   
+  table_open_cache                    64         500                  CHANGE  Medium
+  table_definition_cache              400        600                  CHANGE  Low   
+  binlog_cache_size                   4K         16K                  CHANGE  Low   
+  innodb_buffer_pool_size             64M        recheck after a day  REVIEW  Low   
+  innodb_io_capacity / _max           100 / 200  fix redo first       REVIEW  Low   
+  innodb_open_files                   300        1000                 REVIEW  Low   
+  tmp_table_size                      1M         2M                   REVIEW  Low   
+  sort_buffer_size                    32K        64K                  REVIEW  Low   
+  max_connections                     200        keep                 OK      High  
+  innodb_lru_scan_depth               1024       keep                 OK      High  
+  innodb_thread_concurrency           0          keep                 OK      Medium
+  durability (flush_log/sync_binlog)  1 / 1      keep                 OK      High  
+  open_files_limit                    5000       keep                 OK      High  
+  max_prepared_stmt_count             16382      keep                 OK      High  
+  key_buffer_size                     8M         keep                 OK      High  
 
 Details (evidence and formulas)
   [CHANGE] innodb_redo_log_capacity   8M -> 1G   (confidence: Medium)
@@ -77,7 +77,7 @@ Details (evidence and formulas)
   [CHANGE] table_open_cache   64 -> 500   (confidence: Medium)
   [CHANGE] table_definition_cache   400 -> 600   (confidence: Low)
   [CHANGE] binlog_cache_size   4K -> 16K   (confidence: Low)
-  [REVIEW] innodb_buffer_pool_size   64M -> 61.1G   (confidence: Low)
+  [REVIEW] innodb_buffer_pool_size   64M -> recheck after a day   (confidence: Low)
   [REVIEW] innodb_io_capacity / _max   100 / 200 -> fix redo first   (confidence: Low)
   [REVIEW] innodb_open_files   300 -> 1000   (confidence: Low)
   [REVIEW] tmp_table_size   1M -> 2M   (confidence: Low)

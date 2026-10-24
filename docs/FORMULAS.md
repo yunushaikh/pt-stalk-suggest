@@ -90,23 +90,43 @@ Low. When uptime is under one hour every CHANGE/REVIEW confidence drops a step
 (warm-up inflates counters).
 
 ### innodb_buffer_pool_size
-- Signals: miss rate `Innodb_buffer_pool_reads / Innodb_buffer_pool_read_requests`
-  (window and lifetime), `Innodb_buffer_pool_pages_free` minimum,
-  `Innodb_buffer_pool_wait_free`, swap activity.
+- Signals:
+  - Miss rate `Innodb_buffer_pool_reads / Innodb_buffer_pool_read_requests`,
+    in the window and since start. When `pt-mysql-summary.out` is present, its
+    own 10-second sample (rounded, taken at another moment) and its Buffer
+    Pool Fill are shown too.
+  - Pool contents: `Innodb_buffer_pool_pages_data`, `_free` (minimum), `_misc`.
+    `pages_misc = total - LRU - free` (`srv/srv0srv.cc:1771` 8.4, `:1702` 5.7)
+    are pages taken out of the pool for other uses: row-lock heaps are
+    allocated from the buffer pool (`MEM_HEAP_FOR_LOCK_HEAP = MEM_HEAP_BUFFER`,
+    `include/mem0mem.h:74` 8.4, `:72` 5.7; `buf_block_alloc()` in
+    `mem/memory.cc`, used for every transaction's lock heap in
+    `trx/trx0trx.cc`), and so is the adaptive hash index. Over 10% is reported.
+  - LRU churn from SHOW ENGINE INNODB STATUS (`buf/buf0buf.cc:7222-7252` 8.4):
+    pages made young (re-used) vs not made young (read once and left in the old
+    sublist), and pages evicted without access.
+  - `Innodb_buffer_pool_wait_free`, data-disk read latency, swap, MemAvailable.
+- Scan-driven misses: when not-young pages outnumber young ones 5:1 and
+  `Handler_read_rnd_next` is at least 100k rows/s, the misses come from table
+  scans. The midpoint insertion keeps those pages from flushing hot data, so an
+  index cuts the reads more than a larger pool; confidence of a growth
+  suggestion drops to Low.
+- Outcomes, in this order:
+  1. Memory pressure (swapping, RSS > budget + 5%, MemAvailable < 5%): reduce
+     to the cap, or "add RAM" when the cap is below one chunk.
+  2. Under one day of uptime with misses: recheck after a day.
+  3. Miss > 1% (at >= 10 disk reads/s): increase to `min(cap, 2 x current)`
+     when there is headroom; otherwise "add RAM, then grow": for a pool of
+     `1.5 x current`, RAM to add = that size - cap.
+  4. RSS at the budget without pressure: keep the pool, find the memory
+     mysqld uses outside it.
+  5. Miss 0.1-1% or free-page waits: REVIEW increase when there is headroom.
+  6. After a day, more than 20% free and few reads: REVIEW "can reduce" to
+     `data pages x page size x 1.2`, rounded up to `chunk_size x instances`.
+  7. Otherwise keep.
 - `cap = budget - overhead`, rounded down to `chunk_size x instances`. MySQL
   rounds the size up to that multiple (`include/buf0buf.ic:1410` 5.7,
   `:1114` 8.0, `:1131` 8.4).
-- Shrink to `cap` (CHANGE) only under real memory pressure: the host swaps,
-  RSS is more than 5% over the budget, or MemAvailable falls below 5% of RAM.
-  RSS just over the (heuristic) budget without those is REVIEW, pointing at
-  memory mysqld uses beyond its settings.
-- Miss rates count only with at least 10 disk reads/s. Grow to `cap` when the
-  miss rate exceeds 1% and there is headroom and no swapping; 0.1-1% (or
-  free-page waits) is REVIEW. Disk-read evidence is checked before free pages,
-  because Percona's LRU manager keeps pages free even when the pool is too
-  small. More than 10% free with few reads after a day: OK. Within the first
-  day: REVIEW only.
-
 ### Redo log size
 - Variable: 5.7 and 8.0 < 8.0.30: `innodb_log_file_size x innodb_log_files_in_group`
   (5.7 read-only, total < 512G, `storage/innobase/srv/srv0start.cc:2169`).

@@ -99,6 +99,23 @@ eq "--prefix picks one capture" "$("$root/pt-stalk-suggest" --color never -p "$o
 mkdir -p "$tmp/empty"
 eq "empty directory: clear error" "$("$root/pt-stalk-suggest" "$tmp/empty" 2>&1 | head -1)" "ERROR: no pt-stalk captures (*-mysqladmin) found under $tmp/empty"
 
+echo "buffer pool outcomes"
+# Derived inputs: scale a counter in every sample of a fixture copy.
+scale_status() {   # dir variable factor
+    local f
+    for f in "$1"/*-mysqladmin; do
+        awk -F'|' -v var="$2" -v k="$3" 'BEGIN { OFS = "|" } $2 ~ ("^ " var " ") { $3 = sprintf(" %-20d", int(($3 + 0) * k)) } 1' "$f" >"$f.new" && mv "$f.new" "$f"
+    done
+}
+bp_line() { "$root/pt-stalk-suggest" --color never "$@" 2>&1 | awk '/^  innodb_buffer_pool_size / { $1 = ""; sub(/^ /, ""); print }'; }
+cp -r "$tmp/ps80-stalk" "$tmp/bp-hot"; scale_status "$tmp/bp-hot" Innodb_buffer_pool_read_requests 0.1
+eq "miss > 1% with headroom: increase" "$(bp_line "$tmp/bp-hot")" "64M increase to 128M CHANGE Low"
+eq "miss > 1% without headroom: add RAM, then grow" "$(bp_line --os-reserve 65.9G "$tmp/bp-hot")" "64M add ~1G RAM, then 128M CHANGE Low"
+eq "no memory left at all: add RAM" "$(bp_line --os-reserve 90G "$tmp/bp-hot")" "64M add RAM CHANGE High"
+cp -r "$tmp/ps84-idle" "$tmp/bp-big"; scale_status "$tmp/bp-big" Innodb_buffer_pool_pages_data 0.3; scale_status "$tmp/bp-big" Innodb_buffer_pool_pages_free 600
+eq "warm, mostly empty, no misses: can reduce" "$(bp_line "$tmp/bp-big")" "256M can reduce to 128M REVIEW Low"
+eq "healthy: keep" "$(bp_line "$tmp/ps84-stalk")" "256M keep OK High"
+
 echo "lock scenario (ps84-locks: scan UPDATEs without an index, an open transaction, ALTER behind it, a deadlock)"
 locks=$("$root/pt-stalk-suggest" --color never "$tmp/ps84-locks" 2>&1)
 has() { if printf '%s\n' "$locks" | grep -qE "$2"; then ok "$1"; else bad "$1" "no line matching: $2"; fi; }

@@ -95,12 +95,27 @@ render_memory_budget() {
     kv "Verdict" "$verdict"
 }
 
+# pt-mysql-summary.out, when a collection script saved it next to the capture:
+# its InnoDB section (fill) and its own 10-second status sample. Its counters
+# are rounded ("fuzzy") and it ran at a different moment than pt-stalk.
+read_mysql_summary_bp() {
+    PMS_TIME="" PMS_FILL="" PMS_READS="" PMS_REQS=""
+    local f; f=$(extra_file pt-mysql-summary.out) || return 0
+    PMS_TIME=$(awk -F'|' '/^ *Time \|/ { sub(/^ */, "", $2); print $2; exit }' "$f")
+    PMS_FILL=$(awk -F'|' '/^ *Buffer Pool Fill \|/ { gsub(/ /, "", $2); print $2; exit }' "$f")
+    # Variable / Per day / Per second / N secs: take the per-second column
+    read -r PMS_READS PMS_REQS < <(awk '/^# Status Counters/ { in_sc = 1; next } /^# / { in_sc = 0 }
+        in_sc && $1 == "Innodb_buffer_pool_reads" { r = $3 } in_sc && $1 == "Innodb_buffer_pool_read_requests" { q = $3 }
+        END { print r + 0, q + 0 }' "$f")
+}
+
 rule_buffer_pool() {
     RULE_GROUP=memory
-    local bp chunk inst unit reads req miss_win miss_life free_min total dirty wait_free cap
+    local bp chunk inst unit reads req miss_win miss_life free_min total wait_free cap page
     bp=$(vnum innodb_buffer_pool_size)
     chunk=$(vnum innodb_buffer_pool_chunk_size); inst=$(vnum innodb_buffer_pool_instances)
     unit=$(calc_int "$chunk * $inst"); is "$unit > 0" || unit=$((128 * MiB))
+    page=$(num "$(v innodb_page_size)" 16384)
 
     reads=$(sd Innodb_buffer_pool_reads); req=$(sd Innodb_buffer_pool_read_requests)
     miss_win=$(calc "$req > 0 ? $reads / $req : 0")
@@ -110,15 +125,38 @@ rule_buffer_pool() {
     wait_free=$(sd Innodb_buffer_pool_wait_free)
     cap=$(round_down "$(calc "$MEM_BUDGET - $MEM_OVERHEAD")" "$unit")
     is "$cap < 0" && cap=0
+    local rps; rps=$(sn Innodb_buffer_pool_reads win)
 
-    ev "Miss rate (disk reads / logical reads): $(pct "$miss_win" 1) in window, $(pct "$miss_life" 1) since start"
-    ev "Disk reads: $(human_num "$(s Innodb_buffer_pool_reads win)")/s in window (peak $(human_num "$(s Innodb_buffer_pool_reads peak)")/s); logical reads $(human_num "$(s Innodb_buffer_pool_read_requests win)")/s"
-    ev "Free pages: min $(human_num "$free_min") of $(human_num "$total") ($(pct "$free_min" "$total")); wait_free events in window: $(human_num "$wait_free")"
-    ev "Room for buffer pool: budget $(human_bytes "$MEM_BUDGET") - other mysqld memory $(human_bytes "$MEM_OVERHEAD") ($MEM_OVERHEAD_SRC) = $(human_bytes "$cap")"
+    # ---- evidence: how often reads miss the pool
+    ev "Miss rate (Innodb_buffer_pool_reads / Innodb_buffer_pool_read_requests): $(pct "$miss_win" 1) in window, $(pct "$miss_life" 1) since start"
+    ev "Disk reads: $(human_num "$rps")/s in window (peak $(human_num "$(s Innodb_buffer_pool_reads peak)")/s) for $(human_num "$(s Innodb_buffer_pool_read_requests win)") logical reads/s; data disk read latency $(h disk_rawait_avg) ms"
+    read_mysql_summary_bp
+    if [[ -n $PMS_TIME ]]; then
+        local pms_miss; pms_miss=$(calc "$PMS_REQS > 0 ? $PMS_READS / $PMS_REQS : 0")
+        ev "pt-mysql-summary.out ($PMS_TIME, its own 10 s sample, rounded): Buffer Pool Fill ${PMS_FILL:-?}; $(human_num "$PMS_READS") disk reads/s of $(human_num "$PMS_REQS") requests/s = $(pct "$pms_miss" 1) miss"
+    fi
+    # ---- evidence: what the pool holds
+    local data_max misc_max
+    data_max=$(sn Innodb_buffer_pool_pages_data max); misc_max=$(sn Innodb_buffer_pool_pages_misc max)
+    ev "Pool pages: data $(pct "$data_max" "$total"), free min $(pct "$free_min" "$total"), other uses $(pct "$misc_max" "$total") (Innodb_buffer_pool_pages_misc: adaptive hash index and row-lock memory); free-page waits in window: $(human_num "$wait_free")"
+    # ---- evidence: LRU churn (InnoDB status), read-ahead waste
+    local yr nyr evn
+    yr=$(num "$(ib young_rate)"); nyr=$(num "$(ib notyoung_rate)"); evn=$(num "$(ib evicted_noaccess)")
+    if [[ -n $(ib young_rate) ]]; then
+        ev "LRU (InnoDB status): $(human_num "$yr") pages/s made young (re-used), $(human_num "$nyr")/s not made young (read once), $(human_num "$evn")/s evicted without ever being read"
+    fi
+    ev "Room for the pool: budget $(human_bytes "$MEM_BUDGET") - other mysqld memory $(human_bytes "$MEM_OVERHEAD") ($MEM_OVERHEAD_SRC) = $(human_bytes "$cap")"
     if [[ $MEM_SWAPPING -eq 1 || $(num "$(h swap_used_max)") -gt 0 ]]; then
         ev "Swap: used $(human_bytes "$(h swap_used_max)"), swap-in avg $(h swap_in_avg) KiB/s (max $(h swap_in_max)), swap-out avg $(h swap_out_avg) KiB/s"
     fi
     [[ $(vnum innodb_dedicated_server) -eq 1 ]] && ev "innodb_dedicated_server=ON: the buffer pool is sized automatically at startup"
+
+    # Pages taken out of the LRU for other uses: row-lock heaps and the AHI come
+    # from the buffer pool (MEM_HEAP_FOR_LOCK_HEAP = MEM_HEAP_BUFFER, mem0mem.h;
+    # pages_misc = total - LRU - free, srv0srv.cc)
+    if is "$total > 0 && $misc_max > $total * 0.10"; then
+        finding "$(pct "$misc_max" "$total") of the buffer pool was used for other things than data (Innodb_buffer_pool_pages_misc): InnoDB takes row-lock memory and the adaptive hash index from the pool, so millions of row locks or a large hash index leave less room for cached data."
+    fi
 
     if ((!MEM_KNOWN)); then
         suggest innodb_buffer_pool_size INFO Low "$(human_bytes "$bp")" "unknown" "needs RAM from meminfo" \
@@ -130,8 +168,19 @@ rule_buffer_pool() {
     ((uptime < 86400)) && warm=0
 
     # Ignore miss rates on a trickle of reads: growth needs >= 10 disk reads/s
-    local rps; rps=$(sn Innodb_buffer_pool_reads win)
     if is "$rps < 10" && is "$wait_free == 0"; then miss_win=0; fi
+
+    # Misses that come from table scans: pages read once (not made young) far
+    # outnumber re-used ones and rows are read sequentially at a high rate. The
+    # midpoint insertion keeps scans from flushing hot pages, so a bigger pool
+    # helps less than an index.
+    local scans=0 scan_note=""
+    if is "$nyr > 5 * $yr && $nyr > 1000 && $(sn Handler_read_rnd_next win) >= 100000"; then
+        scans=1
+        scan_note=" Most pages are read once (not made young: $(human_num "$nyr")/s vs $(human_num "$yr")/s re-used) while $(human_num "$(sn Handler_read_rnd_next win)") rows/s are read by table scans: indexing those queries cuts the disk reads more than a larger pool."
+    fi
+    # Do the misses hurt? Slow data-disk reads make them expensive.
+    local slow_disk=0; is "$(num "$(h disk_rawait_avg)") >= 5" && slow_disk=1
 
     # Real memory pressure: swapping, RSS clearly over budget, or almost no
     # MemAvailable left. A small overshoot of the (heuristic) budget alone is
@@ -144,41 +193,55 @@ rule_buffer_pool() {
     fi
     ev "MemAvailable min $(human_bytes "$avail_min") ($(pct "$avail_min" "$MEM_TOTAL") of RAM); swap $(human_bytes "$(h swap_total)")$( is "$(num "$(h swap_total)") == 0" && echo ' (none: if memory runs out, the kernel OOM killer stops mysqld)')"
 
-    if is "$bp > $cap * 1.05" && ((pressure)); then
+    # Sizes for the "increase" outcomes
+    local grow add_ram want
+    grow=$(round_down "$(min2 "$cap" "$(calc "$bp * 2")")" "$unit")
+    want=$(round_up "$(calc "$bp * 1.5")" "$unit")
+    add_ram=$(round_up "$(max2 0 "$(calc "$want - $cap")")" "$GiB")
+    # Size for the "reduce" outcome: the cached data plus 20%, at least 128M
+    local fits; fits=$(round_up "$(max2 "$(calc "$data_max * $page * 1.2")" $((128 * MiB)))" "$unit")
+
+    if is "$bp > $cap * 1.05" && ((pressure)) && is "$cap < $unit || $cap < 128 * $MiB"; then
+        # nothing sensible left to shrink to: the rest of mysqld and the host
+        # already use the memory
+        suggest innodb_buffer_pool_size CHANGE High "$(human_bytes "$bp")" "add RAM" "$formula" \
+            "The host is short of memory ($why_mem) and, after the OS reserve, other processes and mysqld's memory outside the pool, there is no room left for a buffer pool at all. Add RAM or reduce what else uses memory (other processes, per-connection buffers, max_connections); shrinking the pool alone cannot fix this."
+    elif is "$bp > $cap * 1.05" && ((pressure)); then
         suggest innodb_buffer_pool_size CHANGE "$([[ $MEM_SWAPPING -eq 1 ]] && echo High || echo Medium)" \
-            "$(human_bytes "$bp")" "$(human_bytes "$cap")" "$formula" \
+            "$(human_bytes "$bp")" "reduce to $(human_bytes "$cap")" "$formula" \
             "The host is short of memory ($why_mem). Shrink the buffer pool to the cap, or add RAM. Online resize: SET GLOBAL innodb_buffer_pool_size."
-    elif is "$bp > $cap * 1.05" && is "$MEM_RSS > $MEM_BUDGET"; then
-        suggest innodb_buffer_pool_size REVIEW Medium "$(human_bytes "$bp")" "$(human_bytes "$cap") or fix memory use" "$formula" \
-            "mysqld RSS ($(human_bytes "$MEM_RSS")) is at its budget ($(human_bytes "$MEM_BUDGET"), which keeps a $(human_bytes "$MEM_OS_RESERVE") OS reserve), but the host is not swapping and $(human_bytes "$avail_min") stayed available. First find why mysqld uses $(human_bytes "$(calc_int "$MEM_RSS - $bp")") beyond the buffer pool (see Other findings); shrink the pool only if memory keeps growing."
-    # Disk-read evidence comes before free pages: Percona's LRU manager keeps
-    # pages free even while the pool is too small (free pages and thousands of
-    # reads/s together), so "free pages > 10%" alone does not prove a fit.
     elif ((!warm)) && is "$miss_win > 0.001 || $wait_free > 0"; then
-        suggest innodb_buffer_pool_size REVIEW Low "$(human_bytes "$bp")" "$(human_bytes "$(max2 "$bp" "$cap")")" "$formula" \
+        suggest innodb_buffer_pool_size REVIEW Low "$(human_bytes "$bp")" "recheck after a day" "$formula" \
             "Disk reads are high, but MySQL started less than a day ago: part of it is the buffer pool warming up. Take another capture after a day of normal load before resizing."
     elif is "$miss_win > 0.01"; then
-        if is "$cap > $bp * 1.10" && [[ $MEM_SWAPPING -eq 0 ]]; then
-            suggest innodb_buffer_pool_size CHANGE Medium "$(human_bytes "$bp")" "$(human_bytes "$cap")" "$formula" \
-                "More than 1% of page reads go to disk and there is RAM headroom. Raise it toward the cap; recheck the miss rate after the change."
+        local conf=Medium; ((scans)) && conf=Low; ((slow_disk && !scans)) && conf=High
+        if is "$cap > $bp * 1.10 && $MEM_RSS <= $MEM_BUDGET" && [[ $MEM_SWAPPING -eq 0 ]]; then
+            suggest innodb_buffer_pool_size CHANGE "$conf" "$(human_bytes "$bp")" "increase to $(human_bytes "$grow")" "target = min(cap, 2 x current); $formula" \
+                "More than 1% of page reads go to disk and there is RAM headroom. Grow in one step (online: SET GLOBAL innodb_buffer_pool_size) and check the miss rate again.$scan_note"
         else
-            suggest innodb_buffer_pool_size REVIEW Medium "$(human_bytes "$bp")" "no headroom" "$formula" \
-                "The working set does not fit in the pool, but there is no RAM to grow it (or the host is already swapping). Options: add RAM, reduce per-connection buffers, or fix the queries that scan large ranges."
+            suggest innodb_buffer_pool_size CHANGE "$conf" "$(human_bytes "$bp")" "add ~$(human_bytes "$add_ram") RAM, then $(human_bytes "$want")" "want = 1.5 x current (rounded to $(human_bytes "$unit")); RAM to add = want - cap" \
+                "More than 1% of page reads go to disk, but the host has no memory left for a larger pool. For a 50% larger pool ($(human_bytes "$want")) the server needs about $(human_bytes "$add_ram") more RAM, or less memory used elsewhere (per-connection buffers, other processes).$scan_note"
         fi
+    elif is "$bp > $cap * 1.05" && is "$MEM_RSS > $MEM_BUDGET"; then
+        local reads_say="Reads are served from memory (miss rate $(pct "$miss_win" 1)), so the pool is not too small."
+        is "$miss_win > 0.001" && reads_say="Some reads miss the pool ($(pct "$miss_win" 1)), but there is no memory to grow it."
+        suggest innodb_buffer_pool_size REVIEW Medium "$(human_bytes "$bp")" "keep; fix memory use" "$formula" \
+            "$reads_say mysqld RSS ($(human_bytes "$MEM_RSS")) is at its budget ($(human_bytes "$MEM_BUDGET"), which keeps a $(human_bytes "$MEM_OS_RESERVE") OS reserve), but the host is not swapping and $(human_bytes "$avail_min") stayed available. First find why mysqld uses $(human_bytes "$(calc_int "$MEM_RSS - $bp")") beyond the buffer pool (see Other findings); reduce the pool to $(human_bytes "$cap") only if memory keeps growing."
     elif is "$miss_win > 0.001 || $wait_free > 0"; then
         if is "$cap > $bp * 1.10" && [[ $MEM_SWAPPING -eq 0 ]]; then
-            suggest innodb_buffer_pool_size REVIEW Low "$(human_bytes "$bp")" "$(human_bytes "$cap")" "$formula" \
-                "Between 0.1% and 1% of page reads go to disk$(is "$wait_free > 0" && echo ', and threads waited for free pages'): a larger pool would help somewhat, and there is RAM headroom."
+            suggest innodb_buffer_pool_size REVIEW Low "$(human_bytes "$bp")" "increase to $(human_bytes "$grow")" "target = min(cap, 2 x current); $formula" \
+                "Between 0.1% and 1% of page reads go to disk$(is "$wait_free > 0" && echo ', and threads waited for free pages'): a larger pool would help somewhat, and there is RAM headroom.$scan_note"
         else
             suggest innodb_buffer_pool_size OK Medium "$(human_bytes "$bp")" "keep" "miss rate 0.1%-1%, no room to grow" \
-                "A larger pool would help a little, but the host is swapping or has no RAM headroom, so keep the current size."
+                "A larger pool would help a little, but the host is swapping or has no RAM headroom, so keep the current size.$scan_note"
         fi
-    elif is "$total > 0 && $free_min / $total > 0.10" && ((warm)); then
-        suggest innodb_buffer_pool_size OK High "$(human_bytes "$bp")" "keep" "few disk reads and free pages > 10% after warm-up" \
-            "Reads are served from memory and more than 10% of the pool stayed free: the working set fits. It could even be reduced if memory is needed elsewhere."
+    elif ((warm)) && is "$total > 0 && $free_min / $total > 0.20 && $fits < $bp * 0.8"; then
+        local conf=Low; is "$MEM_RSS > $MEM_BUDGET * 0.95 || $avail_min < $MEM_TOTAL * 0.10" && conf=Medium
+        suggest innodb_buffer_pool_size REVIEW "$conf" "$(human_bytes "$bp")" "can reduce to $(human_bytes "$fits")" "fits = data pages ($(human_num "$data_max")) x page size x 1.2, rounded up to $(human_bytes "$unit")" \
+            "After a day of uptime more than 20% of the pool is still empty and reads are served from memory: the data actually used fits in about $(human_bytes "$fits"). Reduce only if the memory is needed elsewhere; the free space also absorbs growth."
     else
-        suggest innodb_buffer_pool_size OK High "$(human_bytes "$bp")" "keep" "miss rate < 0.1% (or no headroom needed)" \
-            "Reads are served from memory."
+        suggest innodb_buffer_pool_size OK High "$(human_bytes "$bp")" "keep" "miss rate < 0.1% (or under 10 disk reads/s)" \
+            "Reads are served from memory: no reason to grow it.$( ((scans)) && echo ' Table scans still read many pages once; that is a query problem, not a pool-size one.')"
     fi
 }
 

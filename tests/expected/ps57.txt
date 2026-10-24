@@ -52,7 +52,7 @@ Summary
   thread_cache_size                     0          16                    CHANGE  Low   
   table_open_cache                      64         500                   CHANGE  Low   
   binlog_cache_size                     4K         16K                   CHANGE  Low   
-  innodb_buffer_pool_size               64M        61.2G                 REVIEW  Low   
+  innodb_buffer_pool_size               64M        recheck after a day   REVIEW  Low   
   innodb_io_capacity / _max             100 / 200  fix redo first        REVIEW  Low   
   innodb_open_files                     300        1000                  REVIEW  Low   
   query_cache_type / _size              ON / 64M   OFF / 0 (test first)  REVIEW  Low   
@@ -73,7 +73,7 @@ Details (evidence and formulas)
   [CHANGE] thread_cache_size   0 -> 16   (confidence: Low)
   [CHANGE] table_open_cache   64 -> 500   (confidence: Low)
   [CHANGE] binlog_cache_size   4K -> 16K   (confidence: Low)
-  [REVIEW] innodb_buffer_pool_size   64M -> 61.2G   (confidence: Low)
+  [REVIEW] innodb_buffer_pool_size   64M -> recheck after a day   (confidence: Low)
   [REVIEW] innodb_io_capacity / _max   100 / 200 -> fix redo first   (confidence: Low)
   [REVIEW] innodb_open_files   300 -> 1000   (confidence: Low)
   [REVIEW] query_cache_type / _size   ON / 64M -> OFF / 0 (test first)   (confidence: Low)
