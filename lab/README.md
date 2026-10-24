@@ -18,3 +18,20 @@ for almost two days, so they show warmed-up counters.
 
 `capture.sh` runs pt-stalk from the host, so it needs Percona Toolkit and the
 mysql client installed locally. The password in `.env` is a lab-only value.
+
+## Lock scenario (`lab/locks`)
+
+One Percona Server 8.4 container that recreates a lock pile-up for the
+`ps84-locks` fixture: UPDATEs by a column with no index (each scans and locks
+the table), INSERTs behind their gap locks, a transaction holding locks while
+it sleeps, an ALTER TABLE behind an open transaction, and a deadlock.
+
+```
+docker compose -p pt-stalk-locks-lab -f lab/locks/docker-compose.yml up -d
+bash lab/locks/capture-locks.sh 25
+tests/make-fixture.sh lab/locks/captures/locks ps84-locks
+```
+
+On 8.4 pt-stalk dumps every `performance_schema.data_locks` row into the
+transactions file (about 4 GB for this scenario); `make-fixture.sh` keeps only
+the INNODB_TRX and data_lock_waits rows.

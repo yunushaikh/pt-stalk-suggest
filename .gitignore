@@ -2,3 +2,5 @@
 work/
 *.mext
 dist/
+lab/locks/captures/
+lab/captures/
