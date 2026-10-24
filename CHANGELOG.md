@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-24
+
 ### Added
 
 - **Disk and I/O section:** per-device iostat with the datadir device marked (LVM volumes mapped through `lsblk-all` when a collection script saved it), iowait, vmstat blocked processes and run queue, InnoDB read/write/flush/redo/fsync rates, and a verdict. When the CPUs are saturated it explains that iowait reads near 0 even if queries wait for disk. When `pt-summary.out` is present, its time is compared with the capture's.
