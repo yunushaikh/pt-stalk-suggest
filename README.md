@@ -43,85 +43,111 @@ output to the checkout version, with gawk and mawk, and it was run on CentOS 7
 
 ## Example
 
-Two triggered captures from the test lab: Percona Server 8.4, up for almost
-two days, with pt-stalk firing on `Threads_running > 4` under a write-heavy
-workload and the redo log left at its 100M default. Excerpt; the full report
-is in [docs/example-output.txt](docs/example-output.txt).
+A capture from the test lab that recreates a common incident on Percona Server
+8.4: thirty sessions run `UPDATE ... WHERE event_id = ?` on a table with no
+index on `event_id`, so each one scans and locks the whole table; INSERTs wait
+behind their gap locks; one transaction keeps its locks while it sleeps; an
+`ALTER TABLE` waits behind an open transaction; two sessions deadlock. Excerpt
+of the incident sections; the full report, including the configuration
+suggestions, is in [docs/example-output.txt](docs/example-output.txt).
 
 ```text
 $ pt-stalk-suggest /var/lib/pt-stalk
 ...
-Source
+Sessions and queries (processlist)
 ----------------------------------------------------------------------------------------------------
-  Directory          /var/lib/pt-stalk
-  Captures used      2: 2026_10_17_06_47_56 2026_10_17_06_48_08
-  Samples            60 per-second samples, 58 s of window (captures overlap by 17 s)
+  Samples            25 processlist snapshots (one per second)
+  Sessions           up to 50 connected; active statements avg 42.0, max 42 (sleeping, system and pt-stalk sessions left out)
 
-Server
-----------------------------------------------------------------------------------------------------
-  Version            Percona Server 8.4.11-11  (rules for 8.4)
-  Host               lab-host
-  Uptime             1d 21h
-  CPUs               22  (busy avg 66.8%, max 84.6%; iowait avg 10.6%)
-  RAM                91.5G  (MemAvailable min 70.2G)
-  Swap               8G total, 0B used; swap-in avg 0.0 KiB/s; vm.swappiness 60
-  Data disk          dm-0 (/)  w/s avg 11357.2, %util avg 74.2 max 85.4
-  Threads_running    avg 8.40, max 13
+  What the active sessions were doing (sessions per snapshot: avg / max)
+    updating                             30.0 / 30    changing rows; long times usually mean waiting
+                                                    for row locks
+    update                                8.0 / 8     an INSERT is adding rows; long times usually
+                                                    mean waiting for locks
+    User sleep                            2.0 / 2
+    Waiting for table metadata lock       2.0 / 2     waiting to use the table at all: another
+                                                    session holds a table-level lock (an ALTER/DDL,
+                                                    or a long open transaction that touched the
+                                                    table)
 
-Summary
-----------------------------------------------------------------------------------------------------
-  Parameter                           Current        Suggested       Status  Conf.
-  innodb_redo_log_capacity            100M           1G              CHANGE  High
-  table_open_cache                    4000           8000            CHANGE  Medium
-  open_files_limit                    8210           17000           CHANGE  Medium
-  binlog_cache_size                   32K            128K            CHANGE  Medium
-  innodb_io_capacity / _max           10000 / 20000  fix redo first  REVIEW  Low
-  sort_buffer_size                    256K           512K            REVIEW  Low
-  innodb_buffer_pool_size             256M           keep            OK      High
-  max_connections                     200            keep            OK      High
-  innodb_log_buffer_size              64M            keep            OK      High
-  innodb_lru_scan_depth               1024           keep            OK      High
-  innodb_thread_concurrency           0              keep            OK      Medium
-  durability (flush_log/sync_binlog)  1 / 1          keep            OK      High
-  thread_cache_size                   10             keep            OK      High
-  table_definition_cache              2000           keep            OK      High
-  innodb_open_files                   4000           keep            OK      High
-  max_prepared_stmt_count             16382          keep            OK      High
-  tmp_table_size                      16M            keep            OK      High
-  key_buffer_size                     8M             keep            OK      High
+  Table-level lock waits seen
+    Waiting for table metadata lock: 50 session-snapshots, longest 32s
+    Meaning: sessions could not even start using a table because another session held a table-level
+    lock on it. Typical causes: an ALTER TABLE or other DDL waiting behind a long transaction,
+    FLUSH TABLES WITH READ LOCK from a backup, or LOCK TABLES. Everything that touches that table
+    queues behind it.
 
-Details (evidence and formulas)
-----------------------------------------------------------------------------------------------------
+  Long-running statements (running 10s or longer; one entry per session, at its longest)
+       34s  id 18  root@172.23.0.1  db lab  state: User sleep
+           select sleep(40)
+       33s  id 31  root@172.23.0.1  db lab  state: update
+           insert into events (event_id, parent_event_id, status, pad) values
+           ('new467430866','new467430866','STARTED','y')
+       33s  id 37  root@172.23.0.1  db lab  state: update
+           insert into events (event_id, parent_event_id, status, pad) values
+           ('new2509310329','new2509310329','STARTED','y')
+    ...
 
-  [CHANGE] innodb_redo_log_capacity   100M -> 1G   (confidence: High)
-    Evidence   Redo written: 75.6M/s in window (peak 98.4M/s), 425.2K/s since start
-               Capacity 100M (innodb_redo_log_capacity, default for 8.4: 100M) holds 1.3 s of
-               writes at 75.6M/s
-               Checkpoint age: max 83.3M of 83.3M = 100.0%; modified age 74.6%
-               (Innodb_checkpoint_age, max of every sample)
-               Flushing thresholds: aggressive from ~87.0%, sync flush (writes stall) from ~93.0%
-               of max checkpoint age
-    Formula    target = one hour of writes, at most max(buffer pool size, 2 x current) and 512G:
-               checkpoint age reached the aggressive-flushing zone
-    Why        InnoDB reached 100.0% of the max checkpoint age: it flushes pages furiously (and
-               stalls writes above ~93%) to free redo space. Dynamic since 8.0.30: SET PERSIST
-               innodb_redo_log_capacity = 1073741824;
-
-  [CHANGE] table_open_cache   4000 -> 8000   (confidence: Medium)
-    Evidence   Opened_tables: 752/s in window (peak 1046/s), 4.02/s since start
-               Open_tables: max 1235 of table_open_cache 4000 (default for 8.4: 4000) (30.9%);
-               instances 16
-               Cache miss rate in window: 7.5%; overflows 752/s
-               Per instance: 4000 / 16 = 250 tables; a session always uses instance thread_id % 16,
-               and most reopens are overflows of one instance
-    Formula    new = 2 x current (rounded to 500), repeat until Opened_tables/s is near 0; requires
-               open_files_limit >= 10 + max_connections + 2 x table_open_cache = 16210
-    Why        Tables are evicted from a full instance while the cache as a whole is not full:
-               sessions touch more tables than one instance holds. Raise table_open_cache (dynamic)
-               so table_open_cache / instances covers the tables a busy session uses, or lower
-               table_open_cache_instances (needs a restart).
+  Repeated statements (literals replaced by ?; sessions = distinct connections running it)
+    sessions max at once max time  hosts  statement
+          30         30      33s      1  update events set status=?, end_time=now(), error_code=?
+                                         where event_id=? and parent_event_id=?
+           8          8      33s      1  insert into events (event_id, parent_event_id, status,
+                                         pad) values (?+)
+           2          2      34s      1  select sleep(?+)
+           1          1      31s      1  select * from jobs
+           1          1      32s      1  alter table jobs add column c30388 int
 
 ...
+Transactions and locks
+----------------------------------------------------------------------------------------------------
+  How to read this: InnoDB locks the rows a statement changes, and under REPEATABLE READ also the
+  rows (and the gaps between them) it reads to find them, until the transaction commits. A
+  statement that has to read a whole table to change one row therefore locks the whole table, and
+  everything else that writes to it waits.
+
+  Transactions       up to 40 open at once; up to 38 waiting for a row lock at the same time (2026-10-24 09:05:35)
+  Longest lock wait  33s (trx 2607); innodb_lock_wait_timeout = 50s
+
+  Statements that lock far more rows than they change
+    trx 2606 (thread 18): 304.1k rows locked, 0 modified, REPEATABLE READ, open 31s
+      now running: select sleep(40)
+      Meaning: an earlier statement in this transaction took the locks, and the transaction is
+      still open while it does something else. It blocks every write that needs those rows until
+      the application commits or rolls back. Find what the application does between that write and
+      its COMMIT.
+
+  What waiting transactions are waiting for (SHOW ENGINE INNODB STATUS)
+  Waiting            up to 38 transactions waiting in one status snapshot; longest wait shown 33s
+       60 x  `lab`.`events`  index PRIMARY
+             lock_mode X
+             = waiting to lock a row and the gap before it (next-key lock), as UPDATE/DELETE do
+             under REPEATABLE READ
+       16 x  `lab`.`events`  index PRIMARY
+             lock_mode X insert intention
+             = an INSERT waiting for a gap lock that another statement took while scanning
+             (REPEATABLE READ locks the gaps between rows it reads)
+    Waits on index PRIMARY: these statements look rows up through the primary key (the table
+    itself), so they are not using a secondary index on the columns in their WHERE clause.
+
+  Metadata (table-level) lock waits: 2 session(s) waiting (performance_schema.metadata_locks)
+    lab.jobs: waiting requests 1 x EXCLUSIVE, 1 x SHARED_READ
+      holds   thread 41       SHARED_READ                  User sleep for 33s: select sleep(40)
+      holds   thread 58       SHARED_UPGRADABLE            Waiting for table metadata lock for 32s: alter table jobs add column c30388 int
+      waits   thread 60                                    Waiting for table metadata lock for 31s: select * from jobs
+    Meaning: a session asked for a table-level lock that conflicts with one another session holds.
+    Usually an ALTER TABLE (it needs EXCLUSIVE) waits for an open transaction that read or wrote
+    the table (SHARED_READ / SHARED_WRITE) to finish, and every new query on that table then queues
+    behind the ALTER. The fix is to end the holding transaction (commit, or kill it) or run DDL
+    when no long transactions are open.
+
+  Who blocks whom (pt-stalk lock-waits)
+    thread 18 from 172.23.0.1:53338 blocks up to 38 transactions (longest wait 33s)
+      now: User sleep for 34s: select sleep(40)
+    thread 21 from 172.23.0.1:53348 blocks up to 29 transactions (longest wait 33s)
+      now: updating for 33s: update events set status='COMPLETED', end_time=now(), error_code='E0'
+           where event_id='ev12939362' and parent_e
+    ...
 ```
 
 ## What it checks
@@ -132,7 +158,10 @@ Details (evidence and formulas)
 | InnoDB | redo log size (`innodb_redo_log_capacity` or `innodb_log_file_size`), `innodb_log_buffer_size`, `innodb_io_capacity` / `_max`, `innodb_lru_scan_depth`, `innodb_thread_concurrency`, durability settings |
 | Caches | `thread_cache_size`, `table_open_cache`, `table_definition_cache`, `open_files_limit`, `innodb_open_files`, `max_prepared_stmt_count` |
 | Buffers | temp tables (`tmp_table_size`, `max_heap_table_size`), `sort_buffer_size`, `binlog_cache_size`, `key_buffer_size`, query cache (5.7) |
-| Findings | joins without indexes, full scans, row lock waits, history list length, swapping, aborted clients, thread pile-ups |
+| Disk and I/O | per-device iostat (IOPS, latency, queue, %util) with the datadir device marked, iowait and blocked processes, run queue, InnoDB read/write/flush/redo/fsync rates, a verdict |
+| Sessions and queries | from the processlist: what sessions were doing (explained), table-level lock waits, long-running statements, the same statement from many sessions (jobs), busiest tables, clients |
+| Transactions and locks | oldest transactions, statements that lock far more rows than they change (missing index), what waiters wait for, metadata locks, who blocks whom, latest deadlock, latch waits, lock-wait timeouts |
+| Findings | the incident's likely causes first, then joins without indexes, full scans, history list length, swapping, aborted clients, thread pile-ups |
 
 Rules are version-aware for 5.7, 8.0 and 8.4. Every formula, threshold and
 default was checked against the Percona Server source of each series; see

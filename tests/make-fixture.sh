@@ -29,9 +29,22 @@ base=${prefix##*/}
 host=$(head -1 "$prefix-hostname")
 scrub() { sed "s/$host/lab-host/g"; }
 
-for f in mysqladmin meminfo vmstat mpstat iostat innodbstatus1 innodbstatus2; do
+for f in mysqladmin meminfo vmstat mpstat iostat innodbstatus1 innodbstatus2 processlist lock-waits; do
     [[ -r $prefix-$f ]] && scrub <"$prefix-$f" >"$out/$base-$f"
 done
+# transactions: on 8.0+ pt-stalk also dumps every row of performance_schema.data_locks
+# (millions of rows when a scan locks a table). Keep INNODB_TRX and data_lock_waits.
+if [[ -r $prefix-transactions ]]; then
+    awk 'function out() { if (blk != "" && !drop) printf "%s", blk; blk = ""; drop = 0 }
+         /^TS / || /^\*+ [0-9]+\. row \*+$/ { out() }
+         /^ *ENGINE_LOCK_ID: / { drop = 1 }
+         { blk = blk $0 "\n" }
+         END { out() }' "$prefix-transactions" | scrub >"$out/$base-transactions"
+fi
+# ps-locks-transactions: keep the metadata_locks sections only
+if [[ -r $prefix-ps-locks-transactions ]]; then
+    awk '/^select / { keep = ($0 ~ /metadata_locks/) } /^TS / || keep' "$prefix-ps-locks-transactions" | scrub >"$out/$base-ps-locks-transactions"
+fi
 echo lab-host >"$out/$base-hostname"
 awk '/^Variable_name\t/ { inb = 1 } inb && /^$/ { exit } inb' "$prefix-variables" |
     sed -E "s/^(hostname|report_host)\t.*/\1\tlab-host/" >"$out/$base-variables"

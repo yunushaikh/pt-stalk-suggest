@@ -9,7 +9,7 @@ out=$(realpath -m "${1:-$root/dist/pt-stalk-suggest}")
 mkdir -p "$(dirname "$out")"
 
 libs=("$root/lib/common.sh" "$root/lib/collect.sh" "$root/lib/report.sh" "$root/lib/defaults.sh")
-for f in "$root"/lib/rules/*.sh; do libs+=("$f"); done
+for f in "$root"/lib/rules/*.sh "$root"/lib/sections/*.sh; do libs+=("$f"); done
 
 {
     # everything before the library block

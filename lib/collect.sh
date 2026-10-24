@@ -283,10 +283,10 @@ load_disk() {
     fi
     ((${#ios[@]})) || return 0
 
-    # iostat -dx shows whole devices: map nvme1n1p1 -> nvme1n1, sda3 -> sda
-    local want=${dev##*/}
-    [[ $want =~ ^(nvme[0-9]+n[0-9]+)p[0-9]+$ ]] && want=${BASH_REMATCH[1]}
-    [[ $want =~ ^((s|v|xv|h)d[a-z]+)[0-9]+$ ]] && want=${BASH_REMATCH[1]}
+    # iostat -dx shows whole devices (nvme1n1p1 -> nvme1n1, sda3 -> sda) and
+    # LVM volumes as dm-N, which lsblk maps when a collection script saved it
+    map_datadir_device
+    local want=${DATA_IOSTAT_DEV:-${dev##*/}}
 
     local k x
     while IFS='=' read -r k x; do HOST[$k]=$x; done < <(awk -v want="$want" '

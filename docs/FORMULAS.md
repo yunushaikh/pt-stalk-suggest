@@ -96,10 +96,16 @@ Low. When uptime is under one hour every CHANGE/REVIEW confidence drops a step
 - `cap = budget - overhead`, rounded down to `chunk_size x instances`. MySQL
   rounds the size up to that multiple (`include/buf0buf.ic:1410` 5.7,
   `:1114` 8.0, `:1131` 8.4).
-- Shrink to `cap` when the host swaps or RSS exceeds the budget. OK when
-  more than 10% of pages stay free after a day. Grow to `cap` when the miss
-  rate exceeds 1% (or threads wait for free pages) and there is headroom
-  and no swapping. Within the first day: REVIEW only.
+- Shrink to `cap` (CHANGE) only under real memory pressure: the host swaps,
+  RSS is more than 5% over the budget, or MemAvailable falls below 5% of RAM.
+  RSS just over the (heuristic) budget without those is REVIEW, pointing at
+  memory mysqld uses beyond its settings.
+- Miss rates count only with at least 10 disk reads/s. Grow to `cap` when the
+  miss rate exceeds 1% and there is headroom and no swapping; 0.1-1% (or
+  free-page waits) is REVIEW. Disk-read evidence is checked before free pages,
+  because Percona's LRU manager keeps pages free even when the pool is too
+  small. More than 10% free with few reads after a day: OK. Within the first
+  day: REVIEW only.
 
 ### Redo log size
 - Variable: 5.7 and 8.0 < 8.0.30: `innodb_log_file_size x innodb_log_files_in_group`
@@ -128,10 +134,13 @@ Low. When uptime is under one hour every CHANGE/REVIEW confidence drops a step
   rounded up to 1G.
   - Pressure >= 0.87: CHANGE High, target = one hour, at most
     `max(buffer pool, 2 x current)`.
-  - Under 20 minutes held: CHANGE Medium, target = one hour, at most about
-    the buffer pool size (8.0's `innodb_dedicated_server` uses <= 0.75 x
-    buffer pool, `ha_innodb.cc:5114-5133`).
-  - 20-60 minutes: REVIEW Low.
+  - Under an hour held and pressure >= 0.5: CHANGE Medium.
+  - Under 20 minutes held but no pressure seen in the capture: REVIEW Medium
+    (the log is not limiting this window; check at peak write times).
+  - 20-60 minutes without pressure: REVIEW Low.
+  - The target is at most about the buffer pool size while there is no
+    pressure (8.0's `innodb_dedicated_server` uses <= 0.75 x buffer pool,
+    `ha_innodb.cc:5114-5133`); already that large: OK.
   - Otherwise OK.
 - `Innodb_os_log_written` counts bytes written minus write-ahead padding
   (`log/log0write.cc:1816` 8.0/8.4; `log0log.cc:1562` 5.7).
@@ -254,7 +263,43 @@ to 16M. Miss rate > 1% with a full cache: CHANGE to 2 x.
 Enabled: CHANGE to OFF / 0. OFF with a size > 0: REVIEW, because the memory
 is still allocated.
 
-## 5. Defaults shown in the evidence
+## 5. Incident sections
+
+These sections describe what happened during the capture; they do not change
+configuration suggestions, but their findings are listed first.
+
+**Disk and I/O.** iostat's first block in each file is the average since boot
+and is skipped. iowait counts only idle CPU time with I/O pending, so on a
+saturated CPU it reads near 0 even when queries wait for disk; vmstat `b`
+(processes blocked on I/O) and the device's `r_await`, `aqu-sz` and `%util` are
+used instead. Verdict: under pressure when %util max >= 90, queue >= 8 or read
+latency >= 10 ms; busy from %util 60.
+
+**Sessions and queries.** Sleeping, system, event-scheduler and pt-stalk's own
+sessions are left out. Statement shapes replace string and number literals
+with `?` and collapse value lists, so the same statement from many sessions
+groups together. Table names come from the SQL text (UPDATE, INTO, FROM,
+JOIN).
+
+**Transactions and locks.**
+- Sample times are the host's local time (the `TS` line); `trx_started`,
+  `trx_wait_started` and deadlock times are the server's. The offset comes
+  from `time_zone` / `system_time_zone` when unambiguous, else from the newest
+  transaction rounded to 15 minutes.
+- A statement that locks at least 10,000 rows and at least 100 times the rows
+  it modifies is reported as scanning: under REPEATABLE READ InnoDB keeps a
+  lock on every row it reads to find the rows to change.
+- Waiters come from `TRX HAS BEEN WAITING ... RECORD LOCKS ... index X of table
+  Y ... lock_mode ...` in InnoDB status. With no index matching the WHERE
+  clause, waits appear on index `PRIMARY`.
+- Metadata locks come from `performance_schema.metadata_locks` (LOCK_STATUS
+  PENDING = waiting); counts are per snapshot.
+- Who blocks whom comes from pt-stalk's lock-waits summary. When pt-stalk could
+  not collect it ("Lock collection already running"), the transactions holding
+  the most row locks are listed as likely blockers.
+- Lock waits that reach `innodb_lock_wait_timeout` fail with ERROR 1205.
+
+## 6. Defaults shown in the evidence
 
 `lib/defaults.sh` holds the compiled-in defaults per series with their
 source lines. The evidence prints them as `(default for 8.4: 64M)`, so a

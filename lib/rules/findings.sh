@@ -14,7 +14,7 @@ rule_findings() {
     x=$(sd Innodb_row_lock_waits)
     if is "$x > 0"; then
         y=$(calc "$(sd Innodb_row_lock_time) / $x")
-        finding "Row lock waits: $(human_num "$x") during the capture, average $(human_num "$y") ms each; up to $(sn Innodb_row_lock_current_waits max) sessions waiting at once. See the lock-waits / transactions files of the capture."
+        finding_top "Row lock waits: $(human_num "$x") finished during the capture, $(human_dur "$(calc "$y / 1000")") each on average (Innodb_row_lock_time / Innodb_row_lock_waits); up to $(sn Innodb_row_lock_current_waits max) sessions waiting at once. See Transactions and locks."
     fi
 
     x=$(num "$(ib history_list)")

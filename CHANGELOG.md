@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Disk and I/O section:** per-device iostat with the datadir device marked (LVM volumes mapped through `lsblk-all` when a collection script saved it), iowait, vmstat blocked processes and run queue, InnoDB read/write/flush/redo/fsync rates, and a verdict. When the CPUs are saturated it explains that iowait reads near 0 even if queries wait for disk. When `pt-summary.out` is present, its time is compared with the capture's.
+- **Sessions and queries section** (processlist): what sessions were doing, explained in plain words; table-level lock waits; long-running statements (`--long-query`, default 10 s); the same statement from many sessions (jobs, batch work); busiest tables; clients, with a note when connections come through MySQL Router.
+- **Transactions and locks section** (INNODB_TRX, InnoDB status, metadata locks, lock-waits): oldest transactions; statements that lock far more rows than they change, with the WHERE columns to index; transactions left open; what waiters wait for (table, index, lock type, explained); metadata lock holders and waiters; who blocks whom; latest deadlock relative to the capture; latch waits; lock waits that reach `innodb_lock_wait_timeout`.
+- Each section lists the files it read. The findings most likely to explain an incident are listed first.
+- Test fixture `ps84-locks`: a lab capture of scanning UPDATEs, a transaction holding locks, an ALTER TABLE behind an open transaction and a deadlock.
+
 ### Fixed
 
+- **Wrong data disk for LVM datadirs:** a `/dev/mapper/...` datadir fell back to the busiest device (often the root disk). With `lsblk-all` it is now mapped to its `dm-N` device; without it, the report says the mapping is unknown.
+- **Server and host clocks:** transaction and deadlock times are in the MySQL server's time zone, pt-stalk's samples in the host's. Times are now converted, so ages are right when the two differ.
+- **Overlapping transaction samples:** with millions of row locks pt-stalk's transactions dump (it includes every `data_locks` row) takes longer than a second and samples overlap; transactions are now counted once per sample, and a caveat explains the dump's cost.
+- **Redo log CHANGE without pressure:** without checkpoint-age pressure in the capture the suggestion is now REVIEW, and the formula shows the arithmetic.
+- **Buffer pool shrink on a thin margin:** shrinking needs swapping, RSS more than 5% over budget, or MemAvailable under 5% of RAM; otherwise REVIEW, pointing at memory mysqld uses beyond its settings.
+- Row lock wait averages are shown in seconds; statement shapes handle doubled quotes (`'it''s'`); mysql client probes (`select @@version_comment`, `select $$`) are not counted as application work.
 - **Captures of different servers were merged:** a directory with pt-stalk output from two MySQL servers was combined into one report. Captures are now grouped by `server_uuid` (else hostname:port); only the newest capture's server is analysed and the others are listed in the caveats.
 - **Buffer pool reported "the working set fits"** while thousands of pages per second were read from disk. Percona's LRU manager keeps pages free even when the pool is too small, so the disk-read evidence is now checked before free pages.
 - **Query cache with a high hit rate** is now REVIEW ("test first") instead of CHANGE. It is CHANGE High when the hit rate is under 50%, entries are pruned for lack of memory, or the processlist shows sessions in "Waiting for query cache lock".

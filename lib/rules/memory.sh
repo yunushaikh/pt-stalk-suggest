@@ -133,10 +133,24 @@ rule_buffer_pool() {
     local rps; rps=$(sn Innodb_buffer_pool_reads win)
     if is "$rps < 10" && is "$wait_free == 0"; then miss_win=0; fi
 
-    if is "$bp > $cap * 1.05" && { [[ $MEM_SWAPPING -eq 1 ]] || is "$MEM_RSS > $MEM_BUDGET"; }; then
+    # Real memory pressure: swapping, RSS clearly over budget, or almost no
+    # MemAvailable left. A small overshoot of the (heuristic) budget alone is
+    # not enough to shrink the pool.
+    local avail_min pressure=0 why_mem=""
+    avail_min=$(num "$(h mem_avail_min)")
+    if [[ $MEM_SWAPPING -eq 1 ]]; then pressure=1; why_mem="the host is swapping"
+    elif is "$MEM_RSS > $MEM_BUDGET * 1.05"; then pressure=1; why_mem="mysqld RSS is more than 5% over its budget"
+    elif is "$avail_min > 0 && $avail_min < $MEM_TOTAL * 0.05"; then pressure=1; why_mem="MemAvailable fell below 5% of RAM"
+    fi
+    ev "MemAvailable min $(human_bytes "$avail_min") ($(pct "$avail_min" "$MEM_TOTAL") of RAM); swap $(human_bytes "$(h swap_total)")$( is "$(num "$(h swap_total)") == 0" && echo ' (none: if memory runs out, the kernel OOM killer stops mysqld)')"
+
+    if is "$bp > $cap * 1.05" && ((pressure)); then
         suggest innodb_buffer_pool_size CHANGE "$([[ $MEM_SWAPPING -eq 1 ]] && echo High || echo Medium)" \
             "$(human_bytes "$bp")" "$(human_bytes "$cap")" "$formula" \
-            "The host is short of memory (swapping or mysqld above its budget). Shrink the buffer pool to the cap, or add RAM. Online resize: SET GLOBAL innodb_buffer_pool_size."
+            "The host is short of memory ($why_mem). Shrink the buffer pool to the cap, or add RAM. Online resize: SET GLOBAL innodb_buffer_pool_size."
+    elif is "$bp > $cap * 1.05" && is "$MEM_RSS > $MEM_BUDGET"; then
+        suggest innodb_buffer_pool_size REVIEW Medium "$(human_bytes "$bp")" "$(human_bytes "$cap") or fix memory use" "$formula" \
+            "mysqld RSS ($(human_bytes "$MEM_RSS")) is at its budget ($(human_bytes "$MEM_BUDGET"), which keeps a $(human_bytes "$MEM_OS_RESERVE") OS reserve), but the host is not swapping and $(human_bytes "$avail_min") stayed available. First find why mysqld uses $(human_bytes "$(calc_int "$MEM_RSS - $bp")") beyond the buffer pool (see Other findings); shrink the pool only if memory keeps growing."
     # Disk-read evidence comes before free pages: Percona's LRU manager keeps
     # pages free even while the pool is too small (free pages and thousands of
     # reads/s together), so "free pages > 10%" alone does not prove a fit.

@@ -95,14 +95,17 @@ rule_redo_log() {
         why="InnoDB reached $(pct "$fill" 1) of the max checkpoint age: it flushes pages furiously (and stalls writes above ~93%) to free redo space."
     elif is "$mins < 60"; then
         target=$(min2 "$hour" "$bp_cap")
-        formula="target = one hour of writes (max of window and lifetime rate), rounded up to 1G, at most about the buffer pool size ($(human_bytes "$bp_cap")) while there is no flushing pressure"
+        formula="one hour of writes = $(human_bytes "$rate")/s x 3600 = $(human_bytes "$(calc "$rate * 3600")"), rounded up to a whole GiB = $(human_bytes "$hour"), at most about the buffer pool size ($(human_bytes "$bp_cap")) while there is no flushing pressure"
         if is "$target <= $REDO_CAP"; then
             suggest "$REDO_PARAM" OK Medium "$(human_bytes "$REDO_CAP")" "keep" "$formula" \
                 "Less than an hour of writes fits, but the redo log is already about the size of the buffer pool and the checkpoint age is not near the flushing thresholds."
             return
-        elif is "$mins < 20"; then
+        elif [[ -n $fill ]] && is "$fill >= 0.5"; then
             status=CHANGE conf=Medium REDO_UNDERSIZED=1
-            why="The redo log holds only $(human_dur "$(calc "$mins * 60")") of writes; at the next burst InnoDB will have to flush aggressively."
+            why="The redo log holds only $(human_dur "$(calc "$mins * 60")") of writes and the checkpoint age already reached $(pct "$fill" 1) of its maximum during the capture."
+        elif is "$mins < 20"; then
+            status=REVIEW conf=Medium
+            why="At the $( is "$rate == $life" && echo 'since-start average' || echo 'capture' ) write rate the redo log holds only $(human_dur "$(calc "$mins * 60")") of writes, but during the capture the checkpoint age stayed at $(pct "${fill:-0}" 1) of its maximum, so it is not limiting this window. A larger redo log smooths flushing during write bursts at the cost of longer crash recovery; check the checkpoint age at peak write times before changing it."
         else
             status=REVIEW conf=Low
             why="Less than an hour of writes fits, but the checkpoint age is not near the flushing thresholds. Growing it smooths flushing at the cost of longer crash recovery."

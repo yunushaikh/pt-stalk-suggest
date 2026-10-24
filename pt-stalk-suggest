@@ -23,7 +23,7 @@ source "$SELF_DIR/lib/collect.sh"
 source "$SELF_DIR/lib/report.sh"
 # shellcheck source=lib/defaults.sh
 source "$SELF_DIR/lib/defaults.sh"
-for f in "$SELF_DIR"/lib/rules/*.sh; do
+for f in "$SELF_DIR"/lib/rules/*.sh "$SELF_DIR"/lib/sections/*.sh; do
     # shellcheck source=/dev/null
     source "$f"
 done
@@ -41,6 +41,7 @@ Options:
   -p, --prefix TS        use only the capture with this prefix (e.g. 2026_10_13_12_39_26)
   -a, --all              also show the evidence for parameters that are OK
   -r, --os-reserve SIZE  memory to keep for the OS (default 10% of RAM, 1G..8G), e.g. 4G
+  -l, --long-query SECS  list statements and transactions running this long (default 10)
       --color WHEN       auto (default), always, never
       --keep-work DIR    keep intermediate files in DIR, including a pt-mext -r style
                          table per capture (<prefix>.mext)
@@ -58,6 +59,7 @@ while (($#)); do
         -p|--prefix) OPT_PREFIX=${2:?}; shift ;;
         -a|--all) SHOW_OK=1 ;;
         -r|--os-reserve) OPT_OS_RESERVE=${2:?}; shift ;;
+        -l|--long-query) LONG_QUERY_SECS=${2:?}; [[ $LONG_QUERY_SECS =~ ^[0-9]+$ ]] || die "--long-query needs whole seconds"; shift ;;
         --color) USE_COLOR=${2:?}; shift ;;
         --keep-work) KEEP_WORK=${2:?}; shift ;;
         -v|--verbose) VERBOSE=1 ;;
@@ -133,6 +135,9 @@ kv "Data disk" "${HOST[disk]:-n/a} (${HOST[data_mount]:-?})  w/s avg ${HOST[disk
 kv "Threads_running" "avg $(human_num "$(s Threads_running avg)"), max $(s Threads_running max)"
 
 render_memory_budget
+render_disk_section
+render_sessions_section
+render_locks_section
 render_summary
 render_details "$SHOW_OK"
 render_findings

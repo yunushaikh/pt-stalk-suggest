@@ -1,9 +1,52 @@
+Disk and I/O
+----------------------------------------------------------------------------------------------------
+  datadir /var/lib/mysql/ is on / (/dev/mapper/ubuntu--vg-ubuntu--lv); iostat names LVM/multipath 
+  volumes dm-N, and pt-stalk records no mapping, so all busy devices are listed
+
+  Device      r/s avg  r/s max  w/s avg  w/s max   r_await   w_await   aqu-sz   %util   %util
+                                                    avg ms    avg ms      max     avg     max
+  dm-0            0.0        0     38.4      453      0.00      6.08      0.5     1.5     3.3
+  dm-1            0.0        0     34.4      418      0.00      5.98      0.5     1.5     3.3
+  nvme0n1         0.0        0     24.6      364      0.00      5.63      0.4     1.4     2.8
+
+  CPU iowait         avg 16.7%, max 17.3% (mpstat, all CPUs)
+  Blocked on I/O     vmstat b: avg 4.0, max 4 processes (wa max 17%)
+  Run queue          vmstat r: avg 1.2 on 22 CPUs (0.05 per CPU)
+
+  InnoDB reads       0/s avg, 0/s peak  (Innodb_data_reads)
+    read volume      0B/s avg, 0B/s peak  (Innodb_data_read)
+  InnoDB writes      0/s avg, 0/s peak  (Innodb_data_writes)
+    write volume     0B/s avg, 0B/s peak  (Innodb_data_written)
+  Pages flushed      0/s avg, 0/s peak  (Innodb_buffer_pool_pages_flushed)
+  Doublewrite pages  0/s avg, 0/s peak  (Innodb_dblwr_pages_written)
+  Redo written       0B/s avg, 0B/s peak  (Innodb_os_log_written)
+  Redo fsyncs        0/s avg, 0/s peak  (Innodb_os_log_fsyncs)
+  Data fsyncs        0/s avg, 0/s peak  (Innodb_data_fsyncs)
+  Pending I/O (max)  reads 0, writes 0, fsyncs 0, redo fsyncs 0
+
+  Verdict            The data disk is not the bottleneck: %util max 3.3, read latency 0.00 ms, queue up to 0.5.
+
+  Files  <capture>-{iostat, vmstat, mpstat, df, mysqladmin} for capture 2026_10_17_06_42_11
+
+Transactions and locks
+----------------------------------------------------------------------------------------------------
+  How to read this: InnoDB locks the rows a statement changes, and under REPEATABLE READ also the 
+  rows (and the gaps between them) it reads to find them, until the transaction commits. A 
+  statement that has to read a whole table to change one row therefore locks the whole table, and 
+  everything else that writes to it waits.
+
+
+  What waiting transactions are waiting for (SHOW ENGINE INNODB STATUS)
+  Waiting            no transaction was waiting for a lock in the status snapshots
+
+  Files  <capture>-{innodbstatus1, innodbstatus2} for capture 2026_10_17_06_42_11
+
 Summary
 ----------------------------------------------------------------------------------------------------
   Parameter                             Current    Suggested  Status  Conf. 
-  innodb_log_file_size (x files)        16M        512M x 2   CHANGE  Medium
   table_open_cache                      64         500        CHANGE  Medium
   query_cache_type / _size              ON / 64M   OFF / 0    CHANGE  High  
+  innodb_log_file_size (x files)        16M        512M x 2   REVIEW  Medium
   innodb_lru_scan_depth                 1024       2048       REVIEW  Low   
   thread_cache_size                     0          16         REVIEW  Low   
   innodb_open_files                     300        1000       REVIEW  Low   
@@ -22,9 +65,9 @@ Summary
   key_buffer_size                       8M         keep       OK      High  
 
 Details (evidence and formulas)
-  [CHANGE] innodb_log_file_size (x files)   16M -> 512M x 2   (confidence: Medium)
   [CHANGE] table_open_cache   64 -> 500   (confidence: Medium)
   [CHANGE] query_cache_type / _size   ON / 64M -> OFF / 0   (confidence: High)
+  [REVIEW] innodb_log_file_size (x files)   16M -> 512M x 2   (confidence: Medium)
   [REVIEW] innodb_lru_scan_depth   1024 -> 2048   (confidence: Low)
   [REVIEW] thread_cache_size   0 -> 16   (confidence: Low)
   [REVIEW] innodb_open_files   300 -> 1000   (confidence: Low)

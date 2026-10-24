@@ -1,3 +1,53 @@
+Disk and I/O
+----------------------------------------------------------------------------------------------------
+  datadir /var/lib/mysql/ is on / (/dev/mapper/ubuntu--vg-ubuntu--lv); iostat names LVM/multipath 
+  volumes dm-N, and pt-stalk records no mapping, so all busy devices are listed
+
+  Device      r/s avg  r/s max  w/s avg  w/s max   r_await   w_await   aqu-sz   %util   %util
+                                                    avg ms    avg ms      max     avg     max
+  dm-1            0.6       12   4874.3     6698      0.01      0.35      9.1    74.3    91.5
+  dm-0            0.6       12   6447.7    13659      0.01      0.69     77.2    69.6    87.7
+  nvme0n1         0.6       12   5057.4    12175      0.01   4794.51 250604.2    62.2    82.0
+
+  CPU iowait         avg 11.7%, max 15.3% (mpstat, all CPUs)
+  Blocked on I/O     vmstat b: avg 5.0, max 7 processes (wa max 15%)
+  Run queue          vmstat r: avg 10.9 on 22 CPUs (0.49 per CPU)
+
+  InnoDB reads       7645/s avg, 11.0k/s peak  (Innodb_data_reads)
+    read volume      119.5M/s avg, 171.9M/s peak  (Innodb_data_read)
+  InnoDB writes      3131/s avg, 4297/s peak  (Innodb_data_writes)
+    write volume     29.2M/s avg, 38.8M/s peak  (Innodb_data_written)
+  Pages flushed      9309/s avg, 13.3k/s peak  (Innodb_buffer_pool_pages_flushed)
+  Doublewrite pages  813/s avg, 1180/s peak  (Innodb_dblwr_pages_written)
+  Redo written       11.9M/s avg, 16.2M/s peak  (Innodb_os_log_written)
+  Redo fsyncs        270/s avg, 400/s peak  (Innodb_os_log_fsyncs)
+  Data fsyncs        779/s avg, 1057/s peak  (Innodb_data_fsyncs)
+  Pending I/O (max)  reads 1, writes 0, fsyncs 3, redo fsyncs 2
+
+  Verdict            The data disk is under pressure (%util max 87.7, queue up to 77.2, read latency 0.01 ms): queries that read from disk wait for it.
+
+  Files  <capture>-{iostat, vmstat, mpstat, df, mysqladmin} for capture 2026_10_17_06_45_37, 
+         2026_10_17_06_45_49
+
+Transactions and locks
+----------------------------------------------------------------------------------------------------
+  How to read this: InnoDB locks the rows a statement changes, and under REPEATABLE READ also the 
+  rows (and the gaps between them) it reads to find them, until the transaction commits. A 
+  statement that has to read a whole table to change one row therefore locks the whole table, and 
+  everything else that writes to it waits.
+
+
+  What waiting transactions are waiting for (SHOW ENGINE INNODB STATUS)
+  Waiting            no transaction was waiting for a lock in the status snapshots
+
+  Internal latch waits (SEMAPHORES)
+        1 waits at log0meb.cc line 1782 (longest 0s): the redo log
+    Meaning: threads queued on an InnoDB internal latch, a short-term lock on an in-memory 
+    structure. Many waits in the same place show what is contended.
+
+  Files  <capture>-{innodbstatus1, innodbstatus2} for capture 2026_10_17_06_45_37, 
+         2026_10_17_06_45_49
+
 Summary
 ----------------------------------------------------------------------------------------------------
   Parameter                           Current    Suggested       Status  Conf. 

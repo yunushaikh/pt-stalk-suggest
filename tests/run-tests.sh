@@ -27,6 +27,15 @@ eq "round_up" "$(round_up 8990 500)" "9000"
 eq "pow2_up" "$(pow2_up 89029632)" "134217728"
 eq "to_bytes" "$(to_bytes 4G)" "4294967296"
 
+echo "incident parsers"
+source "$root/lib/sections/sessions.sh"
+source "$root/lib/sections/locks.sh"
+eq "epoch() without mktime (mawk)" "$(awk "$AWK_EPOCH"' BEGIN { print epoch("2026-10-23 14:40:31") - epoch("2026-10-22 23:59:59") }')" "52832"
+eq "epoch() across a leap day" "$(awk "$AWK_EPOCH"' BEGIN { print epoch("2028-03-01 00:00:00") - epoch("2028-02-28 00:00:00") }')" "172800"
+eq "statement shape" "$(printf '%s\n' "update t set s='x', n=42 where id IN (1,2,3) and k='a''b' and v2=7" | awk "$AWK_FINGERPRINT"' { print fingerprint($0) }')" "update t set s=?, n=? where id IN (?+) and k=? and v2=?"
+printf 'TS 1 2026-10-24 09:05:35\n*************************** 1. row ***************************\n           Id: 7\n         User: app\n         Host: 10.0.0.5:51234\n           db: shop\n      Command: Query\n         Time: 19\n        State: Searching rows for update\n         Info: update orders\n                set status=1\n                where ref=5\n' >"$tmp/pl"
+eq "processlist row, multi-line SQL joined" "$(parse_processlist "$tmp/pl" | tr '\t' '|')" "1|7|app|10.0.0.5|shop|Query|19|Searching rows for update|update orders set status=1 where ref=5"
+
 echo "mysqladmin parser"
 # Three complete samples, one second apart, and a fourth cut short (as when
 # pt-stalk stops mysqladmin mid-output): the fourth must be ignored.
@@ -53,7 +62,9 @@ for fx in "$here"/fixtures/*.tar.gz; do
     tar -C "$tmp" -xzf "$fx"
     out=$("$root/pt-stalk-suggest" --color never --all "$tmp/$name" 2>&1)
     # The summary table plus the status line of every detail block
-    got=$(printf '%s\n' "$out" | sed -n '/^Summary/,/^Details/p;/^  \[[A-Z]*\] /p;/^Other findings/,$p')
+    # The I/O, sessions and locks sections, the summary table, the status line
+    # of every detail block, findings and caveats
+    got=$(printf '%s\n' "$out" | sed -n '/^Disk and I\/O/,/^Details/p;/^  \[[A-Z]*\] /p;/^Other findings/,$p')
     if ((update)); then
         printf '%s\n' "$got" >"$here/expected/$name.txt"; ok "$name (updated)"
     elif diff -u "$here/expected/$name.txt" <(printf '%s\n' "$got") >"$tmp/diff"; then
@@ -88,14 +99,27 @@ eq "--prefix picks one capture" "$("$root/pt-stalk-suggest" --color never -p "$o
 mkdir -p "$tmp/empty"
 eq "empty directory: clear error" "$("$root/pt-stalk-suggest" "$tmp/empty" 2>&1 | head -1)" "ERROR: no pt-stalk captures (*-mysqladmin) found under $tmp/empty"
 
+echo "lock scenario (ps84-locks: scan UPDATEs without an index, an open transaction, ALTER behind it, a deadlock)"
+locks=$("$root/pt-stalk-suggest" --color never "$tmp/ps84-locks" 2>&1)
+has() { if printf '%s\n' "$locks" | grep -qE "$2"; then ok "$1"; else bad "$1" "no line matching: $2"; fi; }
+has "transactions counted once per sample" '^  Transactions +up to 40 open at once; up to 38 waiting'
+has "server clock (UTC) converted to host time (IST)" '^ +31s  trx 2606 '
+has "big locker found" 'trx 2606 \(thread 18\): 304\.1k rows locked, 0 modified'
+has "top blocker from pt-stalk lock-waits" 'thread 18 from .* blocks up to 38 transactions'
+has "metadata lock wait: ALTER behind open transaction" 'Metadata \(table-level\) lock waits.*: 2 session'
+has "metadata lock: SELECT queued behind the ALTER" 'waits +thread 60 .*select \* from jobs'
+has "processlist metadata-lock state" 'Waiting for table metadata lock'
+has "deadlock time placed relative to the capture" 'Latest deadlock +2026-10-24 03:35:30 \(5 s before the first capture\) on `lab`.`acct`'
+has "waits on PRIMARY explained" 'Waits on index PRIMARY'
+
 echo "documentation sample"
 # docs/example-output.txt (shown in the README) must be what the tool prints
-# for the ps84-stalk fixture, so the sample never drifts from real output.
-sample=$("$root/pt-stalk-suggest" --color never "$tmp/ps84-stalk" 2>&1 | sed "s|$tmp/ps84-stalk|/var/lib/pt-stalk|; s/[[:space:]]*$//")
+# for the ps84-locks fixture, so the sample never drifts from real output.
+sample=$("$root/pt-stalk-suggest" --color never "$tmp/ps84-locks" 2>&1 | sed "s|$tmp/ps84-locks|/var/lib/pt-stalk|; s/[[:space:]]*$//")
 if ((update)); then
     printf '%s\n' "$sample" >"$root/docs/example-output.txt"; ok "docs/example-output.txt (updated)"
 elif diff -u "$root/docs/example-output.txt" <(printf '%s\n' "$sample") >"$tmp/diff"; then
-    ok "docs/example-output.txt matches the ps84-stalk fixture"
+    ok "docs/example-output.txt matches the ps84-locks fixture"
 else
     bad "docs/example-output.txt is out of date (run tests/run-tests.sh --update)" "$(head -20 "$tmp/diff")"
 fi

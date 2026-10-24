@@ -10,12 +10,13 @@
 # CONF:   High | Medium | Low
 
 declare -ga R_PARAM=() R_STATUS=() R_CONF=() R_CUR=() R_NEW=() R_EV=() R_FORMULA=() R_WHY=() R_GROUP=()
-declare -ga FINDINGS=() CAVEATS=() NOT_APPLICABLE=()
+declare -ga FINDINGS=() FINDINGS_TOP=() CAVEATS=() NOT_APPLICABLE=()
 declare -ga _EV=()
 RULE_GROUP=""
 
 ev()       { _EV+=("$*"); }
 finding()  { FINDINGS+=("$*"); }
+finding_top() { FINDINGS_TOP+=("$*"); }   # what most likely explains an incident: listed first
 caveat()   { CAVEATS+=("$*"); }
 not_applicable() { NOT_APPLICABLE+=("$1 ($2)"); }
 
@@ -124,9 +125,10 @@ render_details() {
 }
 
 render_findings() {
-    ((${#FINDINGS[@]})) || return 0
+    ((${#FINDINGS[@]} + ${#FINDINGS_TOP[@]})) || return 0
     section "Other findings (not fixed by configuration)"
     local f
+    for f in "${FINDINGS_TOP[@]}"; do printf '  %s*%s ' "$C_R" "$C_0"; wrap 4 "$f"; done
     for f in "${FINDINGS[@]}"; do printf '  * '; wrap 4 "$f"; done
 }
 
