@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-24
+
 ### Changed
 
 - **Redo log evidence shows both rates:** how long the capacity lasts at the since-start write rate and at the capture's rate, and which one the sizing used. A capture taken while writes were blocked (by row locks, say) no longer looks like a quiet server. Durations under 10 minutes keep a decimal; long ones are shown in days.
