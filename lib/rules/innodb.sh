@@ -73,7 +73,12 @@ rule_redo_log() {
     fill=$(redo_pressure)
 
     ev "Redo written: $(human_bytes "$win")/s in window (peak $(human_bytes "$peak")/s), $(human_bytes "$life")/s since start"
-    ev "Capacity $(human_bytes "$REDO_CAP") ($REDO_DESC) holds $(human_dur "$(calc "$mins * 60")") of writes at $(human_bytes "$rate")/s"
+    # How long the capacity lasts at each rate, so a quiet capture (writes
+    # blocked by locks, say) is not mistaken for a quiet server
+    local at_life="no redo written since start" at_win="no redo written during the capture"
+    is "$life > 0" && at_life="$(human_dur "$(calc "$REDO_CAP / $life")") at the since-start rate ($(human_bytes "$life")/s)"
+    is "$win > 0" && at_win="$(human_dur "$(calc "$REDO_CAP / $win")") at the capture rate ($(human_bytes "$win")/s)"
+    ev "Capacity $(human_bytes "$REDO_CAP") ($REDO_DESC) holds $at_life and $at_win; sizing uses the higher rate ($( is "$life >= $win" && echo since-start || echo capture ))"
     if [[ -n $fill ]]; then
         ev "Checkpoint age: max $(human_bytes "$CKPT_AGE") of $(human_bytes "$CKPT_MAX") = $(pct "$CKPT_FILL" 1)${MOD_FILL:+; modified age $(pct "$MOD_FILL" 1)} ($CKPT_SRC)$CKPT_EST"
         ev "Flushing thresholds: aggressive from ~$(pct $FLUSH_AGGRESSIVE 1), sync flush (writes stall) from ~$(pct $FLUSH_SYNC 1) of max checkpoint age"

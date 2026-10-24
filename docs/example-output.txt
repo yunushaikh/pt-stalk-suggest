@@ -255,8 +255,9 @@ Details (evidence and formulas)
 
   [REVIEW] innodb_redo_log_capacity   100M -> 1G   (confidence: Low)
     Evidence   Redo written: 256B/s in window (peak 3K/s), 1001.1K/s since start
-               Capacity 100M (innodb_redo_log_capacity, default for 8.4: 100M) holds 102.3 s of
-               writes at 1001.1K/s
+               Capacity 100M (innodb_redo_log_capacity, default for 8.4: 100M) holds 102.3 s at the
+               since-start rate (1001.1K/s) and 4.7 days at the capture rate (256B/s); sizing uses
+               the higher rate (since-start)
                Checkpoint age: max 3.9K of 83.4M = 0.005% (Innodb_checkpoint_age, max of every
                sample)
                Flushing thresholds: aggressive from ~87.0%, sync flush (writes stall) from ~93.0%
